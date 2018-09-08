@@ -1400,7 +1400,12 @@ int b2b_send_reply(b2b_rpl_data_t* rpl_data)
 		memcpy(p, extra_headers->s, extra_headers->len);
 		p += extra_headers->len;
 	}
-	len = sprintf(p,"Contact: <%.*s>", local_contact.len, local_contact.s);
+	if (strchr(local_contact.s, '<') != (char*)NULL && strrchr(local_contact.s, '>') != (char*)NULL) {
+		len = sprintf(p,"Contact: %.*s", local_contact.len, local_contact.s);
+	}
+	else {
+		len = sprintf(p,"Contact: <%.*s>", local_contact.len, local_contact.s);
+	}
 	p += len;
 	memcpy(p, CRLF, CRLF_LEN);
 	p += CRLF_LEN;
@@ -2855,8 +2860,12 @@ int b2breq_complete_ehdr(str* extra_headers, str *client_headers,
 		memcpy(ehdr.s, extra_headers->s, extra_headers->len);
 		ehdr.len = extra_headers->len;
 	}
-	ehdr.len += sprintf(ehdr.s+ ehdr.len, "Contact: <%.*s>\r\n",
-		local_contact->len, local_contact->s);
+	if (strchr(local_contact->s, '<') != (char*)NULL && strrchr(local_contact->s, '>') != (char*)NULL) {
+		ehdr.len += sprintf(ehdr.s+ ehdr.len, "Contact: %.*s\r\n", local_contact->len, local_contact->s);
+	}
+	else {
+		ehdr.len += sprintf(ehdr.s+ ehdr.len, "Contact: <%.*s>\r\n", local_contact->len, local_contact->s);
+	}
 	if (client_headers && client_headers->len && client_headers->s)
 	{
 		memcpy(ehdr.s + ehdr.len, client_headers->s, client_headers->len);
