@@ -362,6 +362,11 @@ static int srs_send_invite(struct src_sess *sess)
 	ci.extra_headers = &extra_headers;
 
 	ci.local_contact.s = contact_builder(sess->socket, &ci.local_contact.len);
+	int lg = strlen(ci.local_contact.s);
+	memmove((void*)&ci.local_contact.s[1], (void*)&ci.local_contact.s[0], lg+1);
+	ci.local_contact.s[0] = '<';
+	strncat(&ci.local_contact.s[lg+1], ">;+sip.src", 1024 - lg - 2);
+	ci.local_contact.len = strlen(ci.local_contact.s);
 
 	if (srs_build_body(sess, &body, SRS_BOTH) < 0) {
 		LM_ERR("cannot generate request body!\n");
