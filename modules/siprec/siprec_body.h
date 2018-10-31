@@ -36,6 +36,7 @@
 extern struct rtpproxy_binds srec_rtp;
 extern int siprec_port_min;
 extern int siprec_port_max;
+extern int sdp_offer_ipv6;
 
 struct src_sess;
 struct src_part;

@@ -36,6 +36,7 @@ struct rtpproxy_binds srec_rtp;
 
 int siprec_port_min = 35000;
 int siprec_port_max = 65000;
+int sdp_offer_ipv6 = 0;
 int *siprec_port;
 gen_lock_t *siprec_port_lock;
 
@@ -51,7 +52,7 @@ int srs_init(void)
 		return -1;
 	}
 	if (siprec_port_max < siprec_port_min) {
-		LM_NOTICE("port_max < port_min - swapping their values!");
+		LM_NOTICE("port_max < port_min - swaping their values!");
 		tmp = siprec_port_min;
 		siprec_port_min = siprec_port_max;
 		siprec_port_max = tmp;
@@ -466,27 +467,53 @@ struct srec_buffer {
 		(_b)->buffer->s[(_b)->buffer->len++] = (_c); \
 	} while(0)
 
+#define ini_str(_s, t) {_s.s = t; _s.len = (int) sizeof(t) - 1;}
+    
 static int srs_build_sdp(struct src_sess *sess, struct srec_buffer *buf)
 {
 	int p;
 	struct srs_sdp_stream *stream;
 	struct list_head *it;
-	/*
-	 * SDP body format we use:
-	 *
-	 * v=0
-	 * o=- <timestamp> <version> IN IP4 <mediaip>
-	 * s=-
-	 * t=0 0
-	 * c=IN IP4 <mediaip>
-	 * <streams*>
-	 */
-	str header1 = str_init("v=0" CRLF "o=- ");
-	str header2 = str_init(" IN IP4 0.0.0.0" CRLF "s=-" CRLF);
-	str header3 = str_init("t=0 0" CRLF "c=IN IP4 ");
-	str localh = str_init("127.0.0.1");
-	str crlf_str = str_init(CRLF);
+  
+  str header1 = str_init("v=0" CRLF "o=- ");
+  str header2;
+  str header3;
+  str localh;
+  str crlf_str = str_init(CRLF); 
 
+	if (sdp_offer_ipv6 == 1)
+  {
+    /*
+     * SDP body format we use for IPV6:
+     *
+     * v=0
+     * o=- <timestamp> <version> IN IP6 <mediaip>
+     * s=-
+     * t=0 0
+     * c=IN IP6 <mediaip>
+     * <streams*>
+     */
+	  ini_str(header2, " IN IP6 ::" CRLF "s=-" CRLF);
+	  ini_str(header3, "t=0 0" CRLF "c=IN IP6 ");
+	  ini_str(localh, "::1");   
+  }
+  else
+  {
+    /*
+     * SDP body format we use for IPV4:
+     *
+     * v=0
+     * o=- <timestamp> <version> IN IP4 <mediaip>
+     * s=-
+     * t=0 0
+     * c=IN IP4 <mediaip>
+     * <streams*>
+     */
+	  ini_str(header2, " IN IP4 0.0.0.0" CRLF "s=-" CRLF);
+	  ini_str(header3, "t=0 0" CRLF "c=IN IP4 ");
+	  ini_str(localh, "127.0.0.1");
+  }
+  
 	SIPREC_COPY_STR(header1, buf);
 	SIPREC_COPY_INT(sess->ts, buf);
 	SIPREC_COPY_CHAR(' ', buf);
@@ -716,7 +743,7 @@ int srs_handle_media(struct sip_msg *msg, struct src_sess *sess)
 				len += msg_stream->ip_addr.len;
 			else
 				len += msg_session->ip_addr.len;
-			len += 1/* : */ + msg_stream->port.len;
+			len += 3/* : and brackets if needed*/ + msg_stream->port.len;
 
 			/* build the socket to stream to */
 			destination.s = pkg_malloc(len);
@@ -726,15 +753,32 @@ int srs_handle_media(struct sip_msg *msg, struct src_sess *sess)
 			}
 			memcpy(destination.s, "udp:", 4);
 			destination.len = 4;
+      
+      int ipv6 = 0;
 			if (msg_stream->ip_addr.len) {
+        ipv6 = (memchr((void*)msg_stream->ip_addr.s, ':', msg_stream->ip_addr.len) != (void*)NULL) ? 1 : 0;
+        if (ipv6 == 1){
+          destination.s[destination.len] = '[';
+          ++destination.len;          
+        }
 				memcpy(destination.s + destination.len, msg_stream->ip_addr.s,
 						msg_stream->ip_addr.len);
 				destination.len += msg_stream->ip_addr.len;
 			} else {
+        ipv6 = (memchr((void*)msg_session->ip_addr.s, ':', msg_session->ip_addr.len) != (void*)NULL) ? 1 : 0;
+        if (ipv6 == 1){
+          destination.s[destination.len] = '[';
+          ++destination.len;          
+        }
 				memcpy(destination.s + destination.len, msg_session->ip_addr.s,
 						msg_session->ip_addr.len);
 				destination.len += msg_session->ip_addr.len;
 			}
+      if (ipv6 == 1){
+        destination.s[destination.len] = ']';
+        ++destination.len;          
+      }
+
 			destination.s[destination.len++] = ':';
 			memcpy(destination.s + destination.len, msg_stream->port.s,
 					msg_stream->port.len);

@@ -78,6 +78,7 @@ static param_export_t params[] = {
 	{"media_port_min",		INT_PARAM, &siprec_port_min },
 	{"media_port_max",		INT_PARAM, &siprec_port_max },
 	{"skip_failover_codes",	STR_PARAM, &skip_failover_codes.s },
+	{"sdp_offer_ipv6",	INT_PARAM, &sdp_offer_ipv6 },
 	{0, 0, 0}
 };
 
