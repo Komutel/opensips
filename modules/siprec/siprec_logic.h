@@ -38,5 +38,6 @@ void srec_logic_destroy(struct src_sess *sess);
 extern struct b2b_api srec_b2b;
 extern str skip_failover_codes;
 int src_init(void);
+int src_set_copyhdrnames(char *val);
 
 #endif /* _SIPREC_LOGIC_H_ */

@@ -27,11 +27,118 @@
 #include "siprec_body.h"
 #include "../../mod_fix.h"
 
+/*
+    simple str array
+
+    kstrar_t sar = {NULL, 0};
+    kstrar_add(&sar, "abcde;zsed", 10);
+    kstrar_clean(&sar);
+    kstrar_getIdx(&sar, "text", 4, 1);
+
+    the length : sar.len
+    element in array as a char* : sar.strs[idx]
+*/
+typedef struct {
+  char **stra;
+  int len;
+  int unique;
+} kstrar_t;
+
+int kstrar_getIdx(kstrar_t *ar, char* text, int ln, int icase)
+{
+  if (ar->stra == NULL) {
+    return -1;
+  }
+  int i;
+  for (i = 0; i < ar->len; ++i) {
+    if (icase) {
+      if (strncasecmp(ar->stra[i], text, ln) == 0) {
+        return i;
+      }
+    }
+    else {
+      if (strncmp(ar->stra[i], text, ln) == 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+void kstrar_add(kstrar_t *ar, char* valnn, int len)
+{
+  char* val = NULL;
+  if (valnn == NULL || len <= 0) {
+    return;
+  }
+
+  val = (char*) pkg_malloc(len+1);
+  strncpy(val, valnn, len);
+  val[len] = '\0';
+  if (ar->stra == NULL) {
+    ar->stra = (char**) pkg_malloc(sizeof(char*));
+  }
+  // uniqueness
+  if (ar->unique && kstrar_getIdx(ar, val, len, 0) >= 0) {
+    pkg_free(val);
+    return;
+  }
+
+  ar->len = ar->len + 1;
+  ar->stra = (char**)pkg_realloc(ar->stra, (ar->len + 1) * sizeof(char*));
+  // add newly allocated string
+  ar->stra[ar->len - 1] = val;
+
+  // alway with NULL at the end
+  ar->stra[ar->len] = (char*)NULL;
+}
+void kstrar_clean(kstrar_t *ar)
+{
+  int i;
+  for (i = 0; i < ar->len; ++i) {
+    pkg_free(ar->stra[i]);
+  }
+  pkg_free(ar->stra);
+  ar->stra = NULL;
+  ar->len = 0;
+}
+
+
 struct b2b_api srec_b2b;
 str skip_failover_codes = str_init("");
+kstrar_t siprec_copy_hdrnames = {NULL, 0, 0};
 static regex_t skip_codes_regex;
 
 static int srs_send_invite(struct src_sess *sess);
+
+int src_set_copyhdrnames(char *val)
+{
+  char *sep;
+  char *hdr;
+  char *sk;
+  kstrar_clean(&siprec_copy_hdrnames);
+
+  LM_DBG("param: %s\n", val);
+  if (val != NULL && strlen((char*)val) > 0) {
+    // split with ';' as custom_headers of b2b_logic
+    hdr = (char*)val;
+    while (hdr != NULL) {
+      // skip spaces
+      for (; *hdr != '\0' && isspace(*hdr); ++hdr);
+      sep = strchr((char*)hdr, ';');
+      if (sep != NULL) {
+        for (sk=sep-1; sk > hdr && isspace(*sk); --sk);
+        kstrar_add(&siprec_copy_hdrnames, hdr, sk-hdr+1);
+        hdr = sep + 1;
+      }
+      else {
+        for (sk=hdr+strlen(hdr)-1; sk > hdr && isspace(*sk); --sk);
+        kstrar_add(&siprec_copy_hdrnames, hdr, sk-hdr+1);
+        hdr = NULL;
+      }
+    }
+  }
+  return 0;
+}
 
 int src_init(void)
 {
@@ -345,11 +452,8 @@ static int srs_send_invite(struct src_sess *sess)
 	client_info_t ci;
 	str param, body;
 	str *client;
-
-	static str extra_headers = str_init(
-			"Require: siprec" CRLF
-			"Content-Type: multipart/mixed;boundary=" OSS_BOUNDARY CRLF
-		);
+  
+	LM_DBG("building srs invite \n");
 
 	memset(&ci, 0, sizeof ci);
 	ci.method.s = INVITE;
@@ -359,7 +463,10 @@ static int srs_send_invite(struct src_sess *sess)
 	/* TODO: fix uris */
 	ci.to_uri = ci.req_uri;
 	ci.from_uri = ci.to_uri;
-	ci.extra_headers = &extra_headers;
+//	ci.extra_headers = &extra_headers;
+  ci.extra_headers = &sess->extra_headers;
+
+ 	LM_DBG("send invite, extra_headers: %d %s\n", ci.extra_headers->len, ci.extra_headers->s);
 
 	ci.local_contact.s = contact_builder(sess->socket, &ci.local_contact.len);
 	int lg = strlen(ci.local_contact.s);
@@ -368,6 +475,7 @@ static int srs_send_invite(struct src_sess *sess)
 	strncat(&ci.local_contact.s[lg+1], ">;+sip.src", 1024 - lg - 2);
 	ci.local_contact.len = strlen(ci.local_contact.s);
 
+	LM_DBG("building srs invite body\n");
 	if (srs_build_body(sess, &body, SRS_BOTH) < 0) {
 		LM_ERR("cannot generate request body!\n");
 		return -2;
@@ -399,6 +507,36 @@ static int srs_send_invite(struct src_sess *sess)
 
 	return 0;
 }
+void src_addextrahdr(struct src_sess *sess, char* name, int nl, char* val, int vl)
+{
+  if (name == NULL || val == NULL) {
+    return;
+  }
+  if (nl < 0 || strlen(name) < nl) {
+    nl = strlen(name);
+  }
+  if (vl < 0 || strlen(val) < vl) {
+    vl = strlen(val);
+  }
+  if (nl == 0 || vl == 0) {
+    return;
+  }
+  // +5 : ": ", CRLF and '\0'
+  int tl = sess->extra_headers.len + nl + vl + 5;
+  if (sess->extra_headers.s == NULL) {
+    sess->extra_headers.s = shm_malloc(tl);
+    sess->extra_headers.s[0] = '\0';
+  }
+  else {
+    LM_DBG("before: %d, %d\n", sess->extra_headers.len, tl);
+    sess->extra_headers.s = shm_realloc(sess->extra_headers.s, tl);
+  }
+  strncat(sess->extra_headers.s, name, nl);
+  strcat(sess->extra_headers.s, ": ");
+  strncat(sess->extra_headers.s, val, vl);
+  strcat(sess->extra_headers.s, CRLF);
+  sess->extra_headers.len = tl - 1;
+}
 
 /* starts the recording to the srs */
 int src_start_recording(struct sip_msg *msg, struct src_sess *sess)
@@ -406,6 +544,7 @@ int src_start_recording(struct sip_msg *msg, struct src_sess *sess)
 	union sockaddr_union tmp;
 	int streams, ret;
 
+	LM_DBG("start recording, enter\n");
 	if (!sess->socket) {
 		sess->socket = uri2sock(msg, &SIPREC_SRS(sess), &tmp, PROTO_NONE);
 		if (!sess->socket) {
@@ -422,6 +561,25 @@ int src_start_recording(struct sip_msg *msg, struct src_sess *sess)
 	}
 	if (streams == 0)
 		return 0;
+
+	LM_DBG("clearing previous extra headers\n");
+  if (sess->extra_headers.s != NULL) {
+    shm_free(sess->extra_headers.s);
+    sess->extra_headers.s = NULL;
+    sess->extra_headers.len = 0;
+  }
+
+  src_addextrahdr(sess, "Require", -1, "siprec", -1);
+  src_addextrahdr(sess, "Content-Type", -1, "multipart/mixed;boundary=" OSS_BOUNDARY, -1);
+ 	struct hdr_field *hdr;
+//	LM_DBG("adding extra headers, custom\n");
+	for (hdr=msg->headers; hdr != NULL; hdr=hdr->next) {
+//    LM_DBG("Parsed header: %.*s: %.*s\n", hdr->name.len, hdr->name.s, hdr->body.len, hdr->body.s);
+    if (hdr->name.len > 0 && hdr->body.len > 0 && kstrar_getIdx(&siprec_copy_hdrnames, hdr->name.s, hdr->name.len, 1) >=0) {
+//      LM_DBG("adding extra header: %.*s\n", hdr->name.len, hdr->name.s);
+      src_addextrahdr(sess, hdr->name.s, hdr->name.len, hdr->body.s, hdr->body.len);
+    }
+	}
 
 	SIPREC_REF_UNSAFE(sess);
 	ret = srs_send_invite(sess);
@@ -441,16 +599,14 @@ static int src_update_recording(struct sip_msg *msg, struct src_sess *sess, int 
 	struct b2b_req_data req;
 	str inv = str_init(INVITE);
 	int streams;
-	static str extra_headers = str_init(
-			"Require: siprec" CRLF
-			"Content-Type: multipart/mixed;boundary=" OSS_BOUNDARY CRLF
-		);
 
-	memset(&req, 0, sizeof(req));
+  LM_DBG("update recording\n");
+
+  memset(&req, 0, sizeof(req));
 	req.et = B2B_CLIENT;
 	req.b2b_key = &sess->b2b_key;
 	req.method = &inv;
-	req.extra_headers = &extra_headers;
+	req.extra_headers = &sess->extra_headers;
 
 	streams = srs_fill_sdp_stream(msg, sess, &sess->participants[part_no], 1);
 	if (streams < 0) {

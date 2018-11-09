@@ -85,6 +85,7 @@ struct src_sess {
 	 * but we can expand more in the future */
 	int participants_no;
 	struct src_part participants[SRC_MAX_PARTICIPANTS];
+  str extra_headers;
 
 	/* internal */
 	int ref;

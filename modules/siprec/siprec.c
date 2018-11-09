@@ -40,6 +40,7 @@ static int siprec_start_rec(struct sip_msg *msg, char *_srs, char *_grp,
 		char *_cA, char *_cB, char *_rtp, char *_m_ip);
 static int free_fixup_siprec_rec(void **param, int param_no);
 static int free_free_fixup_siprec_rec(void **param, int param_no);
+static int s_src_set_copyhdrnames(modparam_t type, void* val);
 
 /* modules dependencies */
 static dep_export_t deps = {
@@ -79,6 +80,7 @@ static param_export_t params[] = {
 	{"media_port_max",		INT_PARAM, &siprec_port_max },
 	{"skip_failover_codes",	STR_PARAM, &skip_failover_codes.s },
 	{"sdp_offer_ipv6",	INT_PARAM, &sdp_offer_ipv6 },
+  {"siprec_copy_hdrnames",STR_PARAM|USE_FUNC_PARAM, (void *)&s_src_set_copyhdrnames },
 	{0, 0, 0}
 };
 
@@ -108,7 +110,7 @@ struct module_exports exports = {
  */
 static int mod_init(void)
 {
-	LM_DBG("initializing siprec module ...\n");
+	LM_INFO("initializing siprec module ...\n");
 
 	if (srs_init() < 0) {
 		LM_ERR("cannot initialize srs structures!\n");
@@ -145,7 +147,12 @@ static int mod_init(void)
 		LM_WARN("cannot register callback for loaded dialogs - will not be "
 				"able to terminate siprec sessions after a restart!\n");
 
+	LM_INFO("initialization done\n");
 	return 0;
+}
+static int s_src_set_copyhdrnames(modparam_t type, void* val)
+{
+	return src_set_copyhdrnames((char*)val);
 }
 
 /*
@@ -193,6 +200,7 @@ static int siprec_start_rec(struct sip_msg *msg, char *_srs, char *_grp,
 	struct src_sess *ss;
 	struct dlg_cell *dlg;
 
+	LM_INFO("Starting recording\n");
 	if (!_srs) {
 		LM_ERR("No siprec SRS uri specified!\n");
 		return -1;

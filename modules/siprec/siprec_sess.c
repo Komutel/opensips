@@ -67,6 +67,8 @@ static struct src_sess *src_create_session(str *rtp, str *m_ip, str *grp,
 	ss->participants_no = 0;
 	ss->ts = ts;
 
+  ss->extra_headers.s = NULL;
+  ss->extra_headers.len = 0;
 	INIT_LIST_HEAD(&ss->srs);
 
 	lock_init(&ss->lock);
@@ -160,6 +162,14 @@ void src_free_session(struct src_sess *sess)
 		list_del(&node->list);
 		shm_free(node);
 	}
+
+  if (sess->extra_headers.s != NULL) {
+  	LM_INFO("reset extra headers in session\n");
+    shm_free(sess->extra_headers.s);
+    sess->extra_headers.s = NULL;
+    sess->extra_headers.len = 0;
+  }
+
 	srec_logic_destroy(sess);
 	lock_destroy(&sess->lock);
 	shm_free(sess);

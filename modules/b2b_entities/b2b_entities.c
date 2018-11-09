@@ -148,6 +148,7 @@ void b2be_db_timer_update(unsigned int ticks, void* param)
 /** Module initialize function */
 static int mod_init(void)
 {
+  LM_INFO("initialization");
 	/* inspect the parameters */
 	if(server_hsize< 1 || server_hsize> 20 ||
 			client_hsize< 1 || client_hsize> 20)
