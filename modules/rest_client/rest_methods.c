@@ -379,7 +379,8 @@ int start_async_http_req(struct sip_msg *msg, enum rest_client_method method,
 	case REST_CLIENT_POST:
 		w_curl_easy_setopt(handle, CURLOPT_POST, 1);
 		w_curl_easy_setopt(handle, CURLOPT_POSTFIELDS, req_body);
-
+		header_list = curl_slist_append(header_list, "Expect:");
+			
 		if (req_ctype) {
 			sprintf(print_buff, "Content-Type: %s", req_ctype);
 			header_list = curl_slist_append(header_list, print_buff);
