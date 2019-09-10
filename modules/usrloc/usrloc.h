@@ -58,7 +58,10 @@ enum usrloc_modes {
 typedef struct usrloc_api {
 	int use_domain;
 	enum ul_cluster_mode cluster_mode;
+	/* whether the user location caches contacts in memory */
 	int (*have_mem_storage) (void);
+	/* whether the user location makes use of contact ownership tags */
+	int (*tags_in_use) (void);
 	unsigned int nat_flag;
 
 	register_udomain_t     register_udomain;
@@ -104,7 +107,7 @@ static inline int load_ul_api(usrloc_api_t *ul)
 {
 	bind_usrloc_t bind_usrloc;
 
-	bind_usrloc = (bind_usrloc_t)find_export("ul_bind_usrloc", 1, 0);
+	bind_usrloc = (bind_usrloc_t)find_export("ul_bind_usrloc", 0);
 	if (!bind_usrloc) {
 		LM_ERR("can't bind usrloc\n");
 		return -1;

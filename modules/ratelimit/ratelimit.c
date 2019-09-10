@@ -101,33 +101,37 @@ static unsigned int rl_repl_timer_interval = RL_TIMER_INTERVAL;
 static int mod_init(void);
 static int mod_child(int);
 
-/* fixup prototype */
-static int fixup_rl_check(void **param, int param_no);
-
-struct mi_root* mi_stats(struct mi_root* cmd_tree, void* param);
-struct mi_root* mi_reset_pipe(struct mi_root* cmd_tree, void* param);
-struct mi_root* mi_set_pid(struct mi_root* cmd_tree, void* param);
-struct mi_root* mi_get_pid(struct mi_root* cmd_tree, void* param);
-struct mi_root* mi_bin_status(struct mi_root* cmd_tree, void* param);
+mi_response_t *mi_stats(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_stats_1(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_reset_pipe(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_set_pid(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_get_pid(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
 static int pv_get_rl_count(struct sip_msg *msg, pv_param_t *param,
 		pv_value_t *res);
 static int pv_parse_rl_count(pv_spec_p sp, str *in);
 
 static cmd_export_t cmds[] = {
-	{"rl_check", (cmd_function)w_rl_check_2, 2,
-		fixup_rl_check, 0, REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|
-			BRANCH_ROUTE|ERROR_ROUTE|LOCAL_ROUTE|TIMER_ROUTE|EVENT_ROUTE},
-	{"rl_check", (cmd_function)w_rl_check_3, 3,
-		fixup_rl_check, 0, REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|
-			BRANCH_ROUTE|ERROR_ROUTE|LOCAL_ROUTE|TIMER_ROUTE|EVENT_ROUTE},
-	{"rl_dec_count", (cmd_function)w_rl_dec, 1,
-		fixup_spve_null, 0, REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|
-			BRANCH_ROUTE|ERROR_ROUTE|LOCAL_ROUTE|TIMER_ROUTE|EVENT_ROUTE},
-	{"rl_reset_count", (cmd_function)w_rl_reset, 1,
-		fixup_spve_null, 0, REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|
-			BRANCH_ROUTE|ERROR_ROUTE|LOCAL_ROUTE|TIMER_ROUTE|EVENT_ROUTE},
-	{0,0,0,0,0,0}
+	{"rl_check", (cmd_function)w_rl_check, {
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_INT,0,0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0}, {0,0,0}},
+		REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|
+		BRANCH_ROUTE|ERROR_ROUTE|LOCAL_ROUTE|TIMER_ROUTE|EVENT_ROUTE},
+	{"rl_dec_count", (cmd_function)w_rl_dec, {
+		{CMD_PARAM_STR,0,0}, {0,0,0}},
+		REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|
+		BRANCH_ROUTE|ERROR_ROUTE|LOCAL_ROUTE|TIMER_ROUTE|EVENT_ROUTE},
+	{"rl_reset_count", (cmd_function)w_rl_reset, {
+		{CMD_PARAM_STR,0,0}, {0,0,0}},
+		REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|
+		BRANCH_ROUTE|ERROR_ROUTE|LOCAL_ROUTE|TIMER_ROUTE|EVENT_ROUTE},
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t params[] = {
@@ -156,12 +160,24 @@ static param_export_t params[] = {
 #define RLH5 "Params: none ; Shows the status of the other SIP instances."
 
 static mi_export_t mi_cmds [] = {
-	{"rl_list",       RLH1, mi_stats,      0,                0, 0},
-	{"rl_reset_pipe", RLH2, mi_reset_pipe, 0,                0, 0},
-	{"rl_set_pid",    RLH3, mi_set_pid,    0,                0, 0},
-	{"rl_get_pid",    RLH4, mi_get_pid,    MI_NO_INPUT_FLAG, 0, 0},
-	{"rl_bin_status", RLH5, mi_bin_status, MI_NO_INPUT_FLAG, 0, 0},
-	{0,0,0,0,0,0}
+	{"rl_list", RLH1, 0, 0, {
+		{mi_stats, {0}},
+		{mi_stats_1, {"pipe", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{"rl_reset_pipe", RLH2, 0, 0, {
+		{mi_reset_pipe, {"pipe", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{"rl_set_pid", RLH3, 0, 0, {
+		{mi_set_pid, {"ki", "kp", "kd", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{"rl_get_pid", RLH4, 0, 0, {
+		{mi_get_pid, {0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 static pv_export_t mod_items[] = {
@@ -185,7 +201,9 @@ struct module_exports exports= {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS,	/* dlopen flags */
-	&deps,            /* OpenSIPS module dependencies */
+	0,					/* load function */
+	&deps,				/* OpenSIPS module dependencies */
+	0,					/* OpenSIPS dependencies function */
 	cmds,
 	NULL,
 	params,
@@ -197,7 +215,8 @@ struct module_exports exports= {
 	mod_init,			/* module initialization function */
 	0,
 	mod_destroy,		/* module exit function */
-	mod_child			/* per-child init function */
+	mod_child,			/* per-child init function */
+	0					/* reload confirm function */
 };
 
 
@@ -218,7 +237,7 @@ int get_cpuload(void)
 	fclose(f);
 
 	if (scan_res <= 0) {
-		LM_ERR("/proc/stat didn't contain expected values");
+		LM_ERR("/proc/stat didn't contain expected values\n");
 		return -1;
 	}
 
@@ -476,79 +495,59 @@ static inline int hist_check(rl_pipe_t *pipe, int update)
 	#define U2MILI(__usec__) (__usec__/1000)
 	#define S2MILI(__sec__)  (__sec__ *1000)
 	int i;
-	int first_good_index;
+	int now_index;
 	int rl_win_ms = rl_window_size * 1000;
-
-
-	unsigned long long now_total, start_total;
+	unsigned long long now_time, start_time;
 
 	struct timeval tv;
 
-	/* first get values from our beloved replicated friends
-	 * current pipe counter will be calculated after this
-	 * iteration; no need for the old one */
 	pipe->counter = 0;
 	pipe->counter = rl_get_all_counters(pipe);
 
 	gettimeofday(&tv, NULL);
-	if (pipe->rwin.start_time.tv_sec == 0) {
-		/* the lucky one to come first here */
+	now_time = S2MILI(tv.tv_sec) + U2MILI(tv.tv_usec);
+	now_index = (now_time%rl_win_ms) / rl_slot_period;
+
+	start_time = S2MILI(pipe->rwin.start_time.tv_sec)
+		+ U2MILI(pipe->rwin.start_time.tv_usec);
+
+	if ( (pipe->rwin.start_time.tv_sec == 0) ||   /* first run*/
+	(now_time - start_time >= rl_win_ms) ) {      /* or more than one window */
+		//LM_DBG("case 1 - start=%lld/%d, now=%lld/%d, diff=%lld\n",
+		//	start_time, pipe->rwin.start_index, now_time, now_index,
+		//	now_time-start_time);
+		memset(pipe->rwin.window, 0,
+			pipe->rwin.window_size * sizeof(long int));
 		pipe->rwin.start_time = tv;
-		pipe->rwin.start_index = 0;
+		pipe->rwin.start_index = now_index;
+		pipe->rwin.window[now_index] = update;
 
-		/* we know it starts from 0 because we did memset when created*/
-		pipe->rwin.window[pipe->rwin.start_index] += update;
-	} else {
-		start_total = S2MILI(pipe->rwin.start_time.tv_sec)
-							+ U2MILI(pipe->rwin.start_time.tv_usec);
-
-		now_total = S2MILI(tv.tv_sec) + U2MILI(tv.tv_usec);
-
-		/* didn't do any update to the window for "2*window_size" secs
-		 * we can't use any elements from the vector
-		 * the window is invalidated; very unlikely to happen*/
-		if (now_total - start_total >= 2*rl_win_ms) {
-			memset(pipe->rwin.window, 0,
-					pipe->rwin.window_size * sizeof(long int));
-
-			pipe->rwin.start_index = 0;
-			pipe->rwin.start_time = tv;
-			pipe->rwin.window[pipe->rwin.start_index] += update;
-		} else if (now_total - start_total >= rl_win_ms) {
-			/* current time in interval [window_size; 2*window_size)
-			 * all the elements in [start_time; (ctime-window_size+1) are
-			 * invalidated(set to 0)
-			 * */
-			/* the first window index not to be set to 0
-			 * number of slots from the start_index*/
-			first_good_index = ((((now_total - rl_win_ms) - start_total)
-							/rl_slot_period + 1) + pipe->rwin.start_index) %
-							pipe->rwin.window_size;
-
-			/* the new start time will be the start time of the first slot */
-			start_total = (now_total - rl_win_ms) -
-					(now_total - rl_win_ms)%rl_slot_period+ rl_slot_period;
-
-			pipe->rwin.start_time.tv_sec  = start_total/1000;
-			pipe->rwin.start_time.tv_usec = (start_total%1000)*1000;
-
-
-			for (i=pipe->rwin.start_index; i != first_good_index;
-										i=(i+1)%pipe->rwin.window_size)
+	} else
+	if (now_time - start_time >= rl_slot_period) {
+		/* different slot */
+		//LM_DBG("case 2 - start=%lld/%d, now=%lld/%d, diff=%lld\n",
+		//	start_time, pipe->rwin.start_index, now_time, now_index,
+		//	now_time-start_time);
+		/* zero the gap between old/start index and current/now index */
+		for ( i=(pipe->rwin.start_index+1)%pipe->rwin.window_size;
+			i != now_index;
+			i=(i+1)%pipe->rwin.window_size)
 				pipe->rwin.window[i] = 0;
+		/* update the time/index of the last counting */
+		pipe->rwin.start_time = tv;
+		pipe->rwin.start_index = now_index;
 
-			pipe->rwin.start_index = first_good_index;
+		/* count current call; it will be the last element in the window */
+		pipe->rwin.window[now_index] = update;
 
-			/* count current call; it will be the last element in the window */
-			pipe->rwin.window[((pipe->rwin.start_index)
-					+ (pipe->rwin.window_size-1)) % pipe->rwin.window_size] += update;
-
-		} else { /* now_total - start_total < rl_win_ms  */
-			/* no need to modify the window, the value is inside it;
-			 * we just need to increment the number of calls for
-			 * the current slot*/
-			pipe->rwin.window[(now_total-start_total)/rl_slot_period] += update;
-		}
+	} else {
+		/* index the same slot */
+		/* we just need to increment the number of calls for
+		 * the current slot*/
+		//LM_DBG("case 3 - start=%lld/%d, now=%lld/%d, diff=%lld\n",
+		//	start_time, pipe->rwin.start_index, now_time, now_index,
+		//	now_time-start_time);
+		pipe->rwin.window[pipe->rwin.start_index] += update;
 	}
 
 	/* count the total number of calls in the window */
@@ -620,72 +619,98 @@ int rl_pipe_check(rl_pipe_t *pipe)
  */
 
 /* mi function implementations */
-struct mi_root* mi_stats(struct mi_root* cmd_tree, void* param)
+mi_response_t *mi_stats(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_root *rpl_tree;
-	struct mi_node *node=NULL, *rpl=NULL;
-	struct mi_attr *attr;
-	int len;
-	char * p;
+	mi_response_t *resp;
+	mi_item_t *resp_obj;
 
-	node = cmd_tree->node.kids;
-
-	rpl_tree = init_mi_tree( 200, MI_OK_S, MI_OK_LEN);
-	if (rpl_tree==0)
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
 		return 0;
-	rpl = &rpl_tree->node;
-	rpl->flags |= MI_IS_ARRAY;
 
-	if (rl_stats(rpl_tree, &node->value)) {
+	if (rl_stats(resp_obj, NULL)) {
 		LM_ERR("cannot mi print values\n");
 		goto free;
 	}
 
-	if (!(node = add_mi_node_child(rpl, 0, "PIPE", 4, NULL, 0)))
-		goto free;
-
 	LOCK_GET(rl_lock);
-	p = int2str((unsigned long)(*drop_rate), &len);
-	if (!(attr = add_mi_attr(node, MI_DUP_VALUE, "drop_rate", 9, p, len))) {
+	if (add_mi_number(resp_obj, MI_SSTR("drop_rate"), *drop_rate) < 0) {
 		LOCK_RELEASE(rl_lock);
 		goto free;
 	}
-
 	LOCK_RELEASE(rl_lock);
-	return rpl_tree;
+
+	return resp;
+
 free:
-	free_mi_tree(rpl_tree);
+	free_mi_response(resp);
 	return 0;
 }
 
-struct mi_root* mi_set_pid(struct mi_root* cmd_tree, void* param)
+mi_response_t *mi_stats_1(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_node *node;
+	mi_response_t *resp;
+	mi_item_t *resp_obj;
+	str pipe_name;
+
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
+		return 0;
+
+	if (get_mi_string_param(params, "pipe", &pipe_name.s, &pipe_name.len) < 0)
+		return init_mi_param_error();
+
+	if (rl_stats(resp_obj, &pipe_name)) {
+		LM_ERR("cannot mi print values\n");
+		goto free;
+	}
+
+	LOCK_GET(rl_lock);
+	if (add_mi_number(resp_obj, MI_SSTR("drop_rate"), *drop_rate) < 0) {
+		LOCK_RELEASE(rl_lock);
+		goto free;
+	}
+	LOCK_RELEASE(rl_lock);
+
+	return resp;
+
+free:
+	free_mi_response(resp);
+	return 0;
+}
+
+mi_response_t *mi_set_pid(const mi_params_t *params,
+								struct mi_handler *async_hdl)
+{
 	char buf[5];
 	int rl_ki, rl_kp, rl_kd;
+	str ki_s, kp_s, kd_s;
 
-	if (!(node = cmd_tree->node.kids))
-		return init_mi_tree( 400, MI_MISSING_PARM_S, MI_MISSING_PARM_LEN);
+	if (get_mi_string_param(params, "ki", &ki_s.s, &ki_s.len) < 0)
+		return init_mi_param_error();
+	if (get_mi_string_param(params, "kp", &kp_s.s, &kp_s.len) < 0)
+		return init_mi_param_error();
+	if (get_mi_string_param(params, "kd", &kd_s.s, &kd_s.len) < 0)
+		return init_mi_param_error();
 
-	if ( !node->value.s || !node->value.len || node->value.len >= 5)
+	if ( !ki_s.s || !ki_s.len || ki_s.len >= 5)
 		goto bad_syntax;
-
-	memcpy(buf, node->value.s, node->value.len);
-	buf[node->value.len] = '\0';
+	memcpy(buf, ki_s.s, ki_s.len);
+	buf[ki_s.len] = '\0';
 	rl_ki = strtod(buf, NULL);
 
-	node = node->next;
-	if ( !node->value.s || !node->value.len || node->value.len >= 5)
+	if ( !kp_s.s || !kp_s.len || kp_s.len >= 5)
 		goto bad_syntax;
-	memcpy(buf, node->value.s, node->value.len);
-	buf[node->value.len] = '\0';
+	memcpy(buf, kp_s.s, kp_s.len);
+	buf[kp_s.len] = '\0';
 	rl_kp = strtod(buf, NULL);
 
-	node = node->next;
-	if ( !node->value.s || !node->value.len || node->value.len >= 5)
+	if ( !kd_s.s || !kd_s.len || kd_s.len >= 5)
 		goto bad_syntax;
-	memcpy(buf, node->value.s, node->value.len);
-	buf[node->value.len] = '\0';
+	memcpy(buf, kd_s.s, kd_s.len);
+	buf[kd_s.len] = '\0';
 	rl_kd = strtod(buf, NULL);
 
 	LOCK_GET(rl_lock);
@@ -694,105 +719,56 @@ struct mi_root* mi_set_pid(struct mi_root* cmd_tree, void* param)
 	*pid_kd = rl_kd;
 	LOCK_RELEASE(rl_lock);
 
-	return init_mi_tree( 200, MI_OK_S, MI_OK_LEN);
+	return init_mi_result_ok();
+
 bad_syntax:
-	return init_mi_tree( 400, MI_BAD_PARM_S, MI_BAD_PARM_LEN);
+	return init_mi_error(400, MI_SSTR("Bad parameter value"));
 }
 
-struct mi_root* mi_get_pid(struct mi_root* cmd_tree, void* param)
+mi_response_t *mi_get_pid(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_root *rpl_tree;
-	struct mi_node *node=NULL, *rpl=NULL;
-	struct mi_attr* attr;
+	mi_response_t *resp;
+	mi_item_t *resp_obj, *pid_obj;
 
-	rpl_tree = init_mi_tree( 200, MI_OK_S, MI_OK_LEN);
-	if (rpl_tree==0)
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
 		return 0;
-	rpl = &rpl_tree->node;
-	node = add_mi_node_child(rpl, 0, "PID", 3, 0, 0);
-	if(node == NULL)
-		goto error;
-	LOCK_GET(rl_lock);
-	attr= addf_mi_attr(node, 0, "ki", 2, "%0.3f", *pid_ki);
-	if(attr == NULL)
-		goto error;
-	attr= addf_mi_attr(node, 0, "kp", 2, "%0.3f", *pid_kp);
-	if(attr == NULL)
-		goto error;
-	attr= addf_mi_attr(node, 0, "kd", 2, "%0.3f", *pid_kd);
-	LOCK_RELEASE(rl_lock);
-	if(attr == NULL)
+
+	pid_obj = add_mi_object(resp_obj, MI_SSTR("PID"));
+	if (!pid_obj)
 		goto error;
 
-	return rpl_tree;
+	LOCK_GET(rl_lock);
+	if (add_mi_string_fmt(pid_obj, MI_SSTR("ki"), "%0.3f", *pid_ki) < 0)
+		goto error;
+	if (add_mi_string_fmt(pid_obj, MI_SSTR("kp"), "%0.3f", *pid_kp) < 0)
+		goto error;
+	if (add_mi_string_fmt(pid_obj, MI_SSTR("kd"), "%0.3f", *pid_kd) < 0)
+		goto error;
+	LOCK_RELEASE(rl_lock);
+
+	return resp;
 
 error:
 	LOCK_RELEASE(rl_lock);
 	LM_ERR("Unable to create reply\n");
-	free_mi_tree(rpl_tree);
+	free_mi_response(resp);
 	return 0;
 }
 
-struct mi_root* mi_reset_pipe(struct mi_root* cmd_tree, void* param)
+mi_response_t *mi_reset_pipe(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_node *node;
+	str pipe_name;
 
-	if (!(node = cmd_tree->node.kids))
-		return init_mi_tree( 400, MI_MISSING_PARM_S, MI_MISSING_PARM_LEN);
+	if (get_mi_string_param(params, "pipe", &pipe_name.s, &pipe_name.len) < 0)
+		return init_mi_param_error();
 
-	if (w_rl_set_count(node->value, 0))
-		return init_mi_tree( 400, MI_BAD_PARM_S, MI_BAD_PARM_LEN);
+	if (w_rl_set_count(pipe_name, 0))
+		return init_mi_error(500, MI_SSTR("Internal error"));
 
-	return init_mi_tree( 200, MI_OK_S, MI_OK_LEN);
-}
-
-struct mi_root* mi_bin_status(struct mi_root* cmd_tree, void* param)
-{
-	struct mi_root *rpl_tree;
-	struct mi_node *rpl=NULL;
-
-	rpl_tree = init_mi_tree(200, MI_OK_S, MI_OK_LEN);
-	if (rpl_tree==0)
-		return 0;
-	rpl = &rpl_tree->node;
-	rpl->flags |= MI_IS_ARRAY;
-
-	if (rl_repl_cluster &&
-		rl_bin_status(&rpl_tree->node, rl_repl_cluster, "repl_pipes_dest", 15)<0) {
-		LM_ERR("cannot print status\n");
-		goto free;
-	}
-
-	if (rl_repl_cluster &&
-		rl_bin_status(&rpl_tree->node, rl_repl_cluster, "repl_pipes_source", 17)<0) {
-		LM_ERR("cannot print status\n");
-		goto free;
-	}
-
-	return rpl_tree;
-free:
-	free_mi_tree(rpl_tree);
-	return 0;
-}
-
-/* fixup functions */
-static int fixup_rl_check(void **param, int param_no)
-{
-	switch (param_no) {
-		/* pipe name */
-		case 1:
-			return fixup_spve(param);
-			/* limit */
-		case 2:
-			return fixup_igp(param);
-			/* algorithm */
-		case 3:
-			return fixup_sgp(param);
-			/* error */
-		default:
-			LM_ERR("[BUG] too many params (%d)\n", param_no);
-	}
-	return E_UNSPEC;
+	return init_mi_result_ok();
 }
 
 /* pseudo-variable functions */
@@ -847,6 +823,7 @@ static int pv_parse_rl_count(pv_spec_p sp, str *in)
 	}
 	sp->pvp.pvn.type = PV_NAME_INTSTR;
 	sp->pvp.pvn.u.isname.name.s = *in;
+	sp->pvp.pvn.u.isname.type = AVP_NAME_STR;
 	return 0;
 
 }

@@ -48,7 +48,6 @@ static unsigned xmlrpc_met_name_index = 0;
 static unsigned xmlrpc_ev_name_index = 0;
 static unsigned xmlrpc_params_index = 0;
 static unsigned xmlrpc_xmlbody_index = 0;
-static unsigned nr_procs = 0;
 
 int xmlrpc_init_buffers(void)
 {
@@ -63,8 +62,6 @@ int xmlrpc_init_buffers(void)
 
 /* used to communicate with the sending process */
 static int xmlrpc_pipe[2];
-/* used to communicate the status of the send (success or fail) from the sending process back to the requesting ones */
-static int (*xmlrpc_status_pipes)[2];
 /* more than enought for http first line */
 
 /* creates communication pipe */
@@ -83,38 +80,6 @@ int xmlrpc_create_pipe(void)
 		return -1;
 	}
 
-	if (xmlrpc_sync_mode && xmlrpc_create_status_pipes() < 0) {
-		LM_ERR("cannot create communication status pipes\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-/* creates status pipes */
-int xmlrpc_create_status_pipes(void) {
-	int rc, i;
-
-	nr_procs = count_init_children(0) + 2;	/* + 2 timer processes */
-
-	xmlrpc_status_pipes = shm_malloc(nr_procs * sizeof(xmlrpc_pipe));
-
-	if (!xmlrpc_status_pipes) {
-		LM_ERR("cannot allocate xmlrpc_status_pipes\n");
-		return -1;
-	}
-
-	/* create pipes */
-	for (i = 0; i < nr_procs; i++) {
-		do {
-			rc = pipe(xmlrpc_status_pipes[i]);
-		} while (rc < 0 && IS_ERR(EINTR));
-
-		if (rc < 0) {
-			LM_ERR("cannot create status pipe [%d:%s]\n", errno, strerror(errno));
-			return -1;
-		}
-	}
 	return 0;
 }
 
@@ -124,21 +89,6 @@ void xmlrpc_destroy_pipe(void)
 		close(xmlrpc_pipe[0]);
 	if (xmlrpc_pipe[1] != -1)
 		close(xmlrpc_pipe[1]);
-
-	if (xmlrpc_sync_mode)
-		xmlrpc_destroy_status_pipes();
-}
-
-void xmlrpc_destroy_status_pipes(void)
-{
-	int i;
-
-	for(i = 0; i < nr_procs; i++) {
-		close(xmlrpc_status_pipes[i][0]);
-		close(xmlrpc_status_pipes[i][1]);
-	}
-
-	shm_free(xmlrpc_status_pipes);
 }
 
 int xmlrpc_send(xmlrpc_send_t* xmlrpcs)
@@ -161,13 +111,8 @@ int xmlrpc_send(xmlrpc_send_t* xmlrpcs)
 	sched_yield();
 
 	if (xmlrpc_sync_mode) {
-		retries = XMLRPC_SEND_RETRY;
 
-		do {
-			rc = read(xmlrpc_status_pipes[process_no][0], &send_status, sizeof(int));
-		} while (rc < 0 && (IS_ERR(EINTR) || retries-- > 0));
-
-		if (rc < 0) {
+		if (ipc_recv_sync_reply((void **)(long *)&send_status) < 0) {
 			LM_ERR("cannot receive send status\n");
 			send_status = XMLRPC_SEND_FAIL;
 		}
@@ -206,9 +151,6 @@ int xmlrpc_init_writer(void)
 		xmlrpc_pipe[0] = -1;
 	}
 
-	if (xmlrpc_sync_mode)
-		close(xmlrpc_status_pipes[process_no][1]);
-
 	/* Turn non-blocking mode on for sending*/
 	flags = fcntl(xmlrpc_pipe[1], F_GETFL);
 	if (flags == -1) {
@@ -229,30 +171,10 @@ error:
 
 static void xmlrpc_init_reader(void)
 {
-	int i, flags;
-
 	if (xmlrpc_pipe[1] != -1) {
 		close(xmlrpc_pipe[1]);
 		xmlrpc_pipe[1] = -1;
 	}
-
-	if (xmlrpc_sync_mode)
-		for(i = 0; i < nr_procs; i++) {
-			close(xmlrpc_status_pipes[i][0]);
-
-			/* Turn non-blocking mode on for sending*/
-			flags = fcntl(xmlrpc_status_pipes[i][1], F_GETFL);
-			if (flags == -1) {
-				LM_ERR("fcntl failed: %s\n", strerror(errno));
-				close(xmlrpc_status_pipes[i][1]);
-				return;
-			}
-			if (fcntl(xmlrpc_status_pipes[i][1], F_SETFL, flags | O_NONBLOCK) == -1) {
-				LM_ERR("fcntl: set non-blocking failed: %s\n", strerror(errno));
-				close(xmlrpc_status_pipes[i][1]);
-				return;
-			}
-		}
 }
 
 /* sends the buffer */
@@ -578,7 +500,6 @@ static void xmlrpc_init_send_buf(void)
 
 void xmlrpc_process(int rank)
 {
-	int retries, rc;
 	int send_status;
 
 	/* init blocking reader */
@@ -602,15 +523,8 @@ void xmlrpc_process(int rank)
 			send_status = XMLRPC_SEND_SUCCESS;
 
 		if (xmlrpc_sync_mode) {
-			retries = XMLRPC_SEND_RETRY;
-
-			if (xmlrpcs->process_idx >= 0 && xmlrpcs->process_idx < nr_procs) {
-				do {
-					rc = write(xmlrpc_status_pipes[xmlrpcs->process_idx][1], &send_status, sizeof(int));
-				} while (rc < 0 && (IS_ERR(EINTR) || retries-- > 0));
-				if (rc < 0)
-					LM_ERR("cannot send status back to requesting process\n");
-			}
+			if (ipc_send_sync_reply(xmlrpcs->process_idx, (void *)(long)send_status) < 0)
+				LM_ERR("cannot send status back to requesting process\n");
 		}
 end:
 		if (xmlrpcs)

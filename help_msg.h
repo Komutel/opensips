@@ -88,12 +88,24 @@ Options:\n\
     -h           This help message\n\
     -b nr        Maximum receive buffer size which will not be exceeded by\n\
                   auto-probing procedure even if  OS allows\n\
+    -a allocator The memory allocator to use for all memory segments\n\
+                  Possible values: \n\
+                      F_MALLOC    F_MALLOC_DBG\n\
+                      Q_MALLOC    Q_MALLOC_DBG\n\
+                      HP_MALLOC   HP_MALLOC_DBG\n\
+    -k allocator The pkg memory allocator to use (overrides -a)\n\
+    -s allocator The shared memory allocator to use (overrides -a)\n\
+    -e allocator The restart-persistent memory allocator to use (overrides -a)\n\
     -m nr        Size of shared memory allocated in Megabytes\n\
     -M nr        Size of pkg memory allocated in Megabytes\n\
     -w dir       Change the working directory to \"dir\" (default \"/\")\n\
     -t dir       Chroot to \"dir\"\n\
     -u uid       Change uid \n\
     -g gid       Change gid \n\
+    -p pp_cmd    Preprocess the configuration file (along with any others\n\
+                  included) using the specified system command. The command \n\
+                  shall receive input via stdin and it must output the\n\
+                  result to stdout\n\
     -P file      Create a pid file\n\
     -G file      Create a pgid file\n"
 #ifdef UNIT_TESTS

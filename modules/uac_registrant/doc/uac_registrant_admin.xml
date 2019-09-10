@@ -30,7 +30,7 @@
 	    </para>
 	    <para>
 	    Each registrant has it's own state.
-	    Registranr's status can be inspected via "reg_list" MI comand.
+	    Registrant's status can be inspected via "reg_list" MI comand.
 	    </para>
 	    <para>
 		UAC registrant states:
@@ -74,6 +74,16 @@
 			<para><emphasis>7</emphasis>
 				- REGISTRAR_ERROR_STATE -
 				error reply received from the registrar;</para>
+			</listitem>
+			<listitem>
+			<para><emphasis>8</emphasis>
+				- UNREGISTERING_STATE - waiting for a reply from the registrar
+				after an unREGISTER without authentication header was sent;</para>
+			</listitem>
+			<listitem>
+			<para><emphasis>9</emphasis>
+				- AUTHENTICATING_UNREGISTER_STATE - waiting for a reply from the registrar
+				after an unREGISTER with authentication header was sent;</para>
 			</listitem>
 		</itemizedlist>
 	    </para>
@@ -124,7 +134,8 @@ modparam("uac_registrant", "hash_size", 2)
 </programlisting>
 		</example>
 	</section>
-        <section id="param_timer_interval" xreflabel="timer_interval">
+
+	<section id="param_timer_interval" xreflabel="timer_interval">
 		<title><varname>timer_interval</varname> (integer)</title>
 		<para>
 		Defines the periodic timer for checking the registrations status.
@@ -139,6 +150,32 @@ modparam("uac_registrant", "hash_size", 2)
 		<programlisting format="linespecific">
 ...
 modparam("uac_registrant", "timer_interval", 120)
+...
+</programlisting>
+		</example>
+	</section>
+
+	<section id="param_enable_clustering" xreflabel="enable_clustering">
+		<title><varname>enable_clustering</varname> (integer)</title>
+		<para>
+		This parameter enables the clustering support in the module. This is
+		used to share this registration between all the nodes in the cluster.
+		When using this option, you should define (for each registrant record)
+		a sharing tag - this sharing tag will control at the cluster level
+		which node is entitled to perform the registation (only the node having
+		that tag as active will do the registation, the onther nodes being
+		idle).
+		</para>
+		<para>
+		<emphasis>
+			Default value is 0 / off.
+		</emphasis>
+		</para>
+		<example>
+		<title>Set <varname>enable_clustering</varname> parameter</title>
+		<programlisting format="linespecific">
+...
+modparam("uac_registrant", "enable_clustering", 1)
 ...
 </programlisting>
 		</example>
@@ -341,7 +378,19 @@ modparam("uac_registrant", "binding_URI_column", "contact_uri")
 		binding params in REGISTER (not mandatory field).
 		If not NULL or not empty, the string stored here will be added
 		as params to the Contact URI in REGISTER (it MUST start with <quote>;</quote>.
-		There is no validation on the string stored here.
+		</para>
+		<para>
+		If the following two params are present, then the binding will be enforced
+		to be unique (if two bindings are received in a 200ok, a complete binding
+		removal will be performed before re-registering):
+		<itemizedlist>
+		<listitem><para><emphasis>reg-id</emphasis></para></listitem>
+		<listitem><para><emphasis>+sip.instance</emphasis></para></listitem>
+		</itemizedlist>
+		Example of params that will force unique binding:
+		<programlisting format="linespecific">
+;reg-id=1;+sip.instance=&quot;&lt;urn:uuid:11111111-AABBCCDDEEFF&gt;&quot;
+		</programlisting>
 		</para>
 		<para>
 		<emphasis>
@@ -402,6 +451,30 @@ modparam("uac_registrant", "forced_socket_column", "fs")
 </programlisting>
 		</example>
 	</section>
+
+	<section id="param_cluster_shtag_column" xreflabel="cluster_shtag_column">
+		<title><varname>cluster_shtag_column</varname> (string)</title>
+		<para>
+		The column's name in the database storing the
+		cluster sharing tag in [tag_name/cluster_id] format (not mandatory).
+		If a cluster sharing tag is provided, the REGISTER requests will
+		be fired out only when the tag is active.
+		</para>
+		<para>
+		<emphasis>
+			Default value is <quote>cluster_shtag</quote>.
+		</emphasis>
+		</para>
+		<example>
+		<title>Set <quote>cluster_shtag_column</quote> parameter</title>
+		<programlisting format="linespecific">
+...
+modparam("uac_registrant", "cluster_shtag_column", "sh")
+...
+</programlisting>
+		</example>
+	</section>
+
 	</section>
 
 	<section id="exported_functions" xreflabel="exported_functions">
@@ -418,7 +491,7 @@ modparam("uac_registrant", "forced_socket_column", "fs")
 		<para>Parameters: <emphasis>none</emphasis></para>
 		<para>MI FIFO Command Format:</para>
 		<programlisting  format="linespecific">
-opensipsctl fifo reg_list
+opensips-cli -x mi reg_list
 		</programlisting>
 	</section>
 	<section id="mi_reg_reload" xreflabel="reg_reload">
@@ -428,7 +501,7 @@ opensipsctl fifo reg_list
 		<para>Parameters: <emphasis>none</emphasis></para>
 		<para>MI FIFO Command Format:</para>
 		<programlisting  format="linespecific">
-opensipsctl fifo reg_reload
+opensips-cli -x mi reg_reload
 		</programlisting>
 	</section>
 	</section>

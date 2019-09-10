@@ -65,6 +65,7 @@
 #include "../../str_list.h"
 
 #include "../../net/proto_tcp/tcp_common_defs.h"
+#include "tls_conn_server.h"
 #include "tls_config.h"
 #include "tls_domain.h"
 #include "tls_params.h"
@@ -74,8 +75,10 @@
 
 #if (OPENSSL_VERSION_NUMBER >= 0x10100000L && defined __OS_linux)
 #include <features.h>
-#if defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 2)
+#if defined(__GLIBC_PREREQ)
+#if __GLIBC_PREREQ(2, 2)
 #define __OPENSSL_ON_EXIT
+#endif
 #endif
 #endif
 
@@ -105,13 +108,16 @@ static char *tls_domain_avp = NULL;
 static char *sip_domain_avp = NULL;
 
 static int  mod_init(void);
+static int  mod_load(void);
 static void mod_destroy(void);
 static int tls_get_handshake_timeout(void);
 static int tls_get_send_timeout(void);
 static int load_tls_mgm(struct tls_mgm_binds *binds);
-static struct mi_root* tls_reload(struct mi_root *cmd, void *param);
-static struct mi_root * tls_list(struct mi_root *root, void *param);
-static int list_domain(struct mi_node *root, struct tls_domain *d);
+static mi_response_t *tls_reload(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+static mi_response_t *tls_list(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+static int list_domain(mi_item_t *domains_arr, struct tls_domain *d);
 
 /* DB handler */
 static db_con_t *db_hdl = 0;
@@ -163,19 +169,26 @@ static param_export_t params[] = {
 };
 
 static cmd_export_t cmds[] = {
-	{"is_peer_verified", (cmd_function)is_peer_verified,   0, 0, 0,
+	{"is_peer_verified", (cmd_function)is_peer_verified, {{0,0,0}},
 		REQUEST_ROUTE},
-	{"load_tls_mgm", (cmd_function)load_tls_mgm,   0, 0, 0, 0},
-	{0,0,0,0,0,0}
+	{"load_tls_mgm", (cmd_function)load_tls_mgm,
+		{{0,0,0}}, ALL_ROUTES},
+	{0,0,{{0,0,0}},0}
 };
 
 /*
  * Exported MI functions
  */
 static mi_export_t mi_cmds[] = {
-	{ "tls_reload", "reloads stored data from the database", tls_reload, 0, 0, 0},
-	{ "tls_list", "lists all domains", tls_list, 0, 0, 0},
-	{0, 0, 0, 0, 0, 0}
+	{ "tls_reload", "reloads stored data from the database", 0, 0, {
+		{tls_reload, {0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ "tls_list", "lists all domains", 0, 0, {
+		{tls_list, {0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 /*
@@ -353,7 +366,9 @@ struct module_exports exports = {
 	MOD_TYPE_DEFAULT,    /* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	mod_load,   /* load function */
 	NULL,            /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	params,     /* module parameters */
@@ -366,6 +381,7 @@ struct module_exports exports = {
 	0,          /* response function */
 	mod_destroy,/* destroy function */
 	0,          /* per-child init function */
+	0           /* reload confirm function */
 };
 
 
@@ -633,87 +649,29 @@ error:
    is not the certificate_verification one!). */
 int verify_callback(int pre_verify_ok, X509_STORE_CTX *ctx) {
 	char buf[256];
-	X509 *err_cert;
-	int err, depth;
+	X509 *cert;
+	int depth, err;
 
 	depth = X509_STORE_CTX_get_error_depth(ctx);
-	LM_NOTICE("depth = %d\n",depth);
-	if ( depth > VERIFY_DEPTH_S ) {
-		LM_NOTICE("cert chain too long ( depth > VERIFY_DEPTH_S)\n");
-		pre_verify_ok=0;
+
+	if (pre_verify_ok) {
+		LM_NOTICE("depth = %d, verify success\n", depth);
+	} else {
+		LM_NOTICE("depth = %d, verify failure\n", depth);
+
+		cert = X509_STORE_CTX_get_current_cert(ctx);
+		err = X509_STORE_CTX_get_error(ctx);
+
+		X509_NAME_oneline(X509_get_subject_name(cert), buf, sizeof buf);
+		LM_NOTICE("subject = %s\n", buf);
+
+		X509_NAME_oneline(X509_get_issuer_name(cert), buf, sizeof buf);
+		LM_NOTICE("issuer  = %s\n", buf);
+
+		LM_NOTICE("verify error: %s [error=%d]\n", X509_verify_cert_error_string(err), err);
 	}
 
-	if( pre_verify_ok ) {
-		LM_NOTICE("preverify is good: verify return: %d\n", pre_verify_ok);
-		return pre_verify_ok;
-	}
-
-	err_cert = X509_STORE_CTX_get_current_cert(ctx);
-	err = X509_STORE_CTX_get_error(ctx);
-	X509_NAME_oneline(X509_get_subject_name(err_cert),buf,sizeof buf);
-
-	LM_NOTICE("subject = %s\n", buf);
-	LM_NOTICE("verify error:num=%d:%s\n",
-			err, X509_verify_cert_error_string(err));
-
-	switch (err) {
-		case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT:
-			X509_NAME_oneline(X509_get_issuer_name(err_cert),
-					buf,sizeof buf);
-			LM_NOTICE("issuer= %s\n",buf);
-			break;
-		case X509_V_ERR_ERROR_IN_CERT_NOT_BEFORE_FIELD:
-		case X509_V_ERR_CERT_NOT_YET_VALID:
-			LM_NOTICE("notBefore\n");
-			break;
-		case X509_V_ERR_ERROR_IN_CERT_NOT_AFTER_FIELD:
-		case X509_V_ERR_CERT_HAS_EXPIRED:
-			LM_NOTICE("notAfter\n");
-			break;
-		case X509_V_ERR_CERT_SIGNATURE_FAILURE:
-		case X509_V_ERR_UNABLE_TO_DECRYPT_CERT_SIGNATURE:
-			LM_NOTICE("unable to decrypt cert "
-					"signature\n");
-			break;
-		case X509_V_ERR_UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY:
-			LM_NOTICE("unable to decode issuer "
-					"public key\n");
-			break;
-		case X509_V_ERR_OUT_OF_MEM:
-			LM_NOTICE("out of memory \n");
-			break;
-		case X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
-		case X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN:
-			LM_NOTICE("Self signed certificate "
-					"issue\n");
-			break;
-		case X509_V_ERR_CERT_CHAIN_TOO_LONG:
-			LM_NOTICE("certificate chain too long\n");
-			break;
-		case X509_V_ERR_INVALID_CA:
-			LM_NOTICE("invalid CA\n");
-			break;
-		case X509_V_ERR_PATH_LENGTH_EXCEEDED:
-			LM_NOTICE("path length exceeded\n");
-			break;
-		case X509_V_ERR_INVALID_PURPOSE:
-			LM_NOTICE("invalid purpose\n");
-			break;
-		case X509_V_ERR_CERT_UNTRUSTED:
-			LM_NOTICE("certificate untrusted\n");
-			break;
-		case X509_V_ERR_CERT_REJECTED:
-			LM_NOTICE("certificate rejected\n");
-			break;
-
-		default:
-			LM_NOTICE("something wrong with the cert"
-					" ... error code is %d (check x509_vfy.h)\n", err);
-			break;
-	}
-
-	LM_NOTICE("verify return:%d\n", pre_verify_ok);
-	return(pre_verify_ok);
+	return pre_verify_ok;
 }
 
 /* This callback is called during Client Hello processing in order to
@@ -956,8 +914,6 @@ static int load_certificate(SSL_CTX * ctx, char *filename)
 	return 0;
 }
 
-/* TODO: currently we can't load a chain of certificates from database
-*/
 static int load_certificate_db(SSL_CTX * ctx, str *blob)
 {
 	X509 *cert = NULL;
@@ -970,18 +926,36 @@ static int load_certificate_db(SSL_CTX * ctx, str *blob)
 	}
 
 	cert = PEM_read_bio_X509(cbio, NULL, 0, NULL);
-	BIO_free(cbio);
 	if (!cert) {
-		LM_ERR("unable to load certificate from buffer\n");
+		LM_ERR("Unable to load certificate from buffer\n");
+		BIO_free(cbio);
 		return -1;
 	}
 
 	if (! SSL_CTX_use_certificate(ctx, cert)) {
-		LM_ERR("unable to use certificate\n");
+		LM_ERR("Unable to use certificate\n");
+		X509_free(cert);
+		BIO_free(cbio);
+		return -1;
+	}
+	tls_dump_cert_info("Certificate loaded: ", cert);
+	X509_free(cert);
+
+	while ((cert = PEM_read_bio_X509(cbio, NULL, 0, NULL)) != NULL) {
+		if (!SSL_CTX_add_extra_chain_cert(ctx, cert)){
+			tls_dump_cert_info("Unable to add chain cert: ", cert);
+			X509_free(cert);
+			BIO_free(cbio);
+			return -1;
+		}
+		/* The x509 certificate provided to SSL_CTX_add_extra_chain_cert()
+		*	will be freed by the library when the SSL_CTX is destroyed.
+		*	An application should not free the x509 object.a*/
+		tls_dump_cert_info("Chain certificate loaded: ", cert);
 	}
 
-	X509_free(cert);
-	LM_DBG("successfully loaded\n");
+	BIO_free(cbio);
+	LM_DBG("Successfully loaded\n");
 	return 0;
 }
 
@@ -1093,7 +1067,7 @@ static int load_ca(SSL_CTX * ctx, char *filename)
 static int load_ca_db(SSL_CTX * ctx, str *blob)
 {
 	X509_STORE *store;
-	X509 *cert;
+	X509 *cert = NULL;
 	BIO *cbio;
 
 	cbio = BIO_new_mem_buf((void*)blob->s,blob->len);
@@ -1103,28 +1077,25 @@ static int load_ca_db(SSL_CTX * ctx, str *blob)
 		return -1;
 	}
 
-	cert = PEM_read_bio_X509(cbio, NULL, 0, NULL);
-	BIO_free(cbio);
-
-	if (!cert) {
-		LM_ERR("unable to load certificate from buffer\n");
-		return -1;
-	}
-
 	store =  SSL_CTX_get_cert_store(ctx);
 	if(!store) {
-		X509_free(cert);
+		BIO_free(cbio);
 		LM_ERR("Unable to get X509 store from ssl context\n");
 		return -1;
 	}
 
-	if (!X509_STORE_add_cert(store, cert)){
+	while ((cert = PEM_read_bio_X509_AUX(cbio, NULL, 0, NULL)) != NULL) {
+		tls_dump_cert_info("CA loaded: ", cert);
+		if (!X509_STORE_add_cert(store, cert)){
+			tls_dump_cert_info("Unable to add ca: ", cert);
+			X509_free(cert);
+			BIO_free(cbio);
+			return -1;
+		}
 		X509_free(cert);
-		LM_ERR("Unable to add ca\n");
-		return -1;
 	}
 
-	X509_free(cert);
+	BIO_free(cbio);
 	LM_DBG("CA successfully loaded\n");
 	return 0;
 }
@@ -1267,12 +1238,29 @@ static int init_tls_dom(struct tls_domain *d)
 	/*
 	 * create context
 	 */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	d->ctx = SSL_CTX_new(TLS_method());
+#else
 	d->ctx = SSL_CTX_new(ssl_methods[d->method - 1]);
+#endif
 	if (d->ctx == NULL) {
 		LM_ERR("cannot create ssl context for tls domain '%.*s'\n",
 			d->name.len, ZSW(d->name.s));
 		return -1;
 	}
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	if (d->method != TLS_USE_SSLv23) {
+		if (!SSL_CTX_set_min_proto_version(d->ctx,
+				ssl_versions[d->method - 1]) ||
+			!SSL_CTX_set_max_proto_version(d->ctx,
+				ssl_versions[d->method - 1])) {
+			LM_ERR("cannot enforce ssl version for tls domain '%.*s'\n",
+				d->name.len, ZSW(d->name.s));
+			return -1;
+		}
+	}
+#endif
 
 	if (init_ssl_ctx_behavior(d) < 0)
 		return -1;
@@ -1519,30 +1507,16 @@ static void
 init_ssl_methods(void)
 {
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-	ssl_methods[TLS_USE_TLSv1_cli-1] = (SSL_METHOD*)TLS_client_method();
-	ssl_methods[TLS_USE_TLSv1_srv-1] = (SSL_METHOD*)TLS_server_method();
-	ssl_methods[TLS_USE_TLSv1-1] = (SSL_METHOD*)TLS_method();
-#else
-	ssl_methods[TLS_USE_TLSv1_cli-1] = (SSL_METHOD*)TLSv1_client_method();
-	ssl_methods[TLS_USE_TLSv1_srv-1] = (SSL_METHOD*)TLSv1_server_method();
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	ssl_methods[TLS_USE_TLSv1-1] = (SSL_METHOD*)TLSv1_method();
-#endif
-
-	ssl_methods[TLS_USE_SSLv23_cli-1] = (SSL_METHOD*)SSLv23_client_method();
-	ssl_methods[TLS_USE_SSLv23_srv-1] = (SSL_METHOD*)SSLv23_server_method();
 	ssl_methods[TLS_USE_SSLv23-1] = (SSL_METHOD*)SSLv23_method();
 
 #if OPENSSL_VERSION_NUMBER >= 0x10001000L
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-	ssl_methods[TLS_USE_TLSv1_2_cli-1] = (SSL_METHOD*)TLS_client_method();
-	ssl_methods[TLS_USE_TLSv1_2_srv-1] = (SSL_METHOD*)TLS_server_method();
-	ssl_methods[TLS_USE_TLSv1_2-1] = (SSL_METHOD*)TLS_method();
-#else
-	ssl_methods[TLS_USE_TLSv1_2_cli-1] = (SSL_METHOD*)TLSv1_2_client_method();
-	ssl_methods[TLS_USE_TLSv1_2_srv-1] = (SSL_METHOD*)TLSv1_2_server_method();
 	ssl_methods[TLS_USE_TLSv1_2-1] = (SSL_METHOD*)TLSv1_2_method();
 #endif
+#else
+	ssl_versions[TLS_USE_TLSv1_2-1] = TLS1_2_VERSION;
+	ssl_versions[TLS_USE_TLSv1-1] = TLS1_VERSION;
 #endif
 }
 
@@ -1624,19 +1598,20 @@ static int reload_data(void)
 }
 
 /* reloads data from the db */
-static struct mi_root* tls_reload(struct mi_root* root, void *param)
+static mi_response_t *tls_reload(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
 	LM_INFO("reload data MI command received!\n");
 
 	if (!tls_db_url.s)
-		return init_mi_tree(500, "DB url not set", 14);
+		return init_mi_error(500, MI_SSTR("DB url not set"));
 
 	if (reload_data() < 0) {
 		LM_ERR("failed to load tls data\n");
-		return init_mi_tree(500, "Failed to reload", 16);
+		return init_mi_error(500, MI_SSTR("Failed to reload"));
 	}
 
-	return init_mi_tree(200, MI_SSTR(MI_OK));
+	return init_mi_result_ok();
 }
 
 #ifdef __OPENSSL_ON_EXIT
@@ -1655,6 +1630,25 @@ static void openssl_on_exit(int status, void *param)
 	_exit(status);
 }
 #endif
+
+static int mod_load(void)
+{
+	/*
+	 * this has to be called before any function calling CRYPTO_malloc,
+	 * CRYPTO_malloc will set allow_customize in openssl to 0
+	 */
+
+	LM_INFO("openssl version: %s\n", SSLeay_version(SSLEAY_VERSION));
+	if (!CRYPTO_set_mem_functions(os_malloc, os_realloc, os_free)) {
+		LM_ERR("unable to set the memory allocation functions\n");
+		LM_ERR("NOTE: please make sure you are loading tls_mgm module at the"
+			"very beginning of your script, before any other module!\n");
+		return -1;
+	}
+
+	return 0;
+}
+
 
 static int mod_init(void) {
 	str s;
@@ -1759,7 +1753,7 @@ static int mod_init(void) {
 		s.s = tls_domain_avp;
 		s.len = strlen(s.s);
 		if (parse_avp_spec( &s, &tls_client_domain_avp)) {
-			LM_ERR("cannot parse client_tls_domain_avp");
+			LM_ERR("cannot parse client_tls_domain_avp\n");
 			return -1;
 		}
 	}
@@ -1768,23 +1762,9 @@ static int mod_init(void) {
 		s.s = sip_domain_avp;
 		s.len = strlen(s.s);
 		if (parse_avp_spec(&s, &sip_client_domain_avp)) {
-			LM_ERR("cannot parse client_sip_domain_avp");
+			LM_ERR("cannot parse client_sip_domain_avp\n");
 			return -1;
 		}
-	}
-
-	/*
-	 * this has to be called before any function calling CRYPTO_malloc,
-	 * CRYPTO_malloc will set allow_customize in openssl to 0
-	 */
-
-	LM_INFO("openssl version: %s\n", SSLeay_version(SSLEAY_VERSION));
-	if (!CRYPTO_set_mem_functions(os_malloc, os_realloc, os_free)) {
-		LM_ERR("unable to set the memory allocation functions\n");
-		LM_ERR("NOTE: check if you are using openssl 1.0.1e-fips, (or other "
-			"FIPS version of openssl, as this is known to be broken; if so, "
-			"you need to upgrade or downgrade to a different openssl version!\n");
-		return -1;
 	}
 
 #if !defined(OPENSSL_NO_COMP)
@@ -1973,11 +1953,9 @@ static int is_peer_verified(struct sip_msg* msg, char* foo, char* foo2)
 	}
 
 	LM_DBG("trying to find TCP connection of received message...\n");
-	/* what if we have multiple connections to the same remote socket? e.g. we can have
-	   connection 1: localIP1:localPort1 <--> remoteIP:remotePort
-	   connection 2: localIP2:localPort2 <--> remoteIP:remotePort
-	   but I think the is very unrealistic */
-	tcp_conn_get(0, &(msg->rcv.src_ip), msg->rcv.src_port, PROTO_TLS, &c, NULL/*fd*/);
+
+	tcp_conn_get( msg->rcv.proto_reserved1, 0, 0, PROTO_TLS, NULL,
+		&c, NULL/*fd*/);
 	if (c==NULL) {
 		LM_ERR("no corresponding TLS/TCP connection found."
 				" This should not happen... return -1\n");
@@ -2032,159 +2010,152 @@ static int tls_get_send_timeout(void)
 }
 
 /* lists client or server domains*/
-static int list_domain(struct mi_node *root, struct tls_domain *d)
+static int list_domain(mi_item_t *domains_arr, struct tls_domain *d)
 {
-	struct mi_node *node = NULL;
-	struct mi_node *child, *child_f;
+	mi_item_t *domain_item, *addrf_arr, *domf_arr;
 	struct str_list *filt;
 
 	while (d) {
-		node = add_mi_node_child(root, MI_DUP_VALUE, "Domain", 6,
-			d->name.s, d->name.len);
-		if (node == NULL) goto error;
+		domain_item = add_mi_object(domains_arr, NULL, 0);
+		if (!domain_item)
+			goto error;
 
-		if (d->flags & DOM_FLAG_SRV)
-			child = add_mi_node_child(node, 0, "Type", 4, "TLS_DOMAIN_SRV", 14);
-		else
-			child = add_mi_node_child(node, 0, "Type", 4, "TLS_DOMAIN_CLI", 14);
-		if (child == NULL) goto error;
+		if (add_mi_string(domain_item, MI_SSTR("name"),
+			d->name.s, d->name.len) < 0)
+			goto error;
 
-		child = add_mi_node_child(node, MI_DUP_VALUE|MI_IS_ARRAY,
-			MI_SSTR("IP ADDRESS FILTERS"), 0, 0);
-		if (child == NULL) goto error;
+		if (d->flags & DOM_FLAG_SRV) {
+			if (add_mi_string(domain_item, MI_SSTR("type"),
+				MI_SSTR("TLS_DOMAIN_SRV")) < 0)
+				goto error;
+		} else
+			if (add_mi_string(domain_item, MI_SSTR("type"),
+				MI_SSTR("TLS_DOMAIN_CLI")) < 0)
+				goto error;
 
-		for (filt = d->match_addresses; filt; filt = filt->next) {
-			child_f = add_mi_node_child(child, MI_DUP_VALUE,
-				MI_SSTR("ADDRESS"), filt->s.s, filt->s.len);
-			if (!child_f) goto error;
-		}
+		addrf_arr = add_mi_array(domain_item, MI_SSTR("IP ADDRESS FILTERS"));
+		if (!addrf_arr)
+			goto error;
 
-		child = add_mi_node_child(node, MI_DUP_VALUE|MI_IS_ARRAY,
-			MI_SSTR("SIP DOMAIN FILTERS"), 0, 0);
-		if (child == NULL) goto error;
+		for (filt = d->match_addresses; filt; filt = filt->next)
+			if (add_mi_string(addrf_arr, 0, 0, filt->s.s, filt->s.len) < 0)
+				goto error;
 
-		for (filt = d->match_domains; filt; filt = filt->next) {
-			child_f = add_mi_node_child(child, MI_DUP_VALUE,
-				MI_SSTR("DOMAIN"), filt->s.s, filt->s.len);
-			if (!child_f) goto error;
-		}
+		domf_arr = add_mi_array(domain_item, MI_SSTR("SIP DOMAIN FILTERS"));
+		if (!domf_arr)
+			goto error;
+
+		for (filt = d->match_domains; filt; filt = filt->next)
+			if (add_mi_string(domf_arr, 0, 0, filt->s.s, filt->s.len) < 0)
+				goto error;
 
 		switch (d->method) {
-		case TLS_USE_TLSv1_cli:
-		case TLS_USE_TLSv1_srv:
 		case TLS_USE_TLSv1:
-			child = add_mi_node_child(node, 0, "METHOD", 6, "TLSv1", 5);
+			if (add_mi_string(domain_item, MI_SSTR("METHOD"),
+				MI_SSTR("TLSv1")) < 0)
+				goto error;
 			break;
-		case TLS_USE_SSLv23_cli:
-		case TLS_USE_SSLv23_srv:
 		case TLS_USE_SSLv23:
-			child = add_mi_node_child(node, 0, "METHOD", 6, "SSLv23", 6);
+			if (add_mi_string(domain_item, MI_SSTR("METHOD"),
+				MI_SSTR("SSLv23")) < 0)
+				goto error;
 			break;
-		case TLS_USE_TLSv1_2_cli:
-		case TLS_USE_TLSv1_2_srv:
 		case TLS_USE_TLSv1_2:
-			child = add_mi_node_child(node, 0, "METHOD", 6, "TLSv1_2", 7);
+			if (add_mi_string(domain_item, MI_SSTR("METHOD"),
+				MI_SSTR("TLSv1_2")) < 0)
+				goto error;
 			break;
 		default: goto error;
 		}
-		if (child == NULL) goto error;
 
-		if (d->verify_cert)
-			child = add_mi_node_child(node, 0, "VERIFY_CERT", 11, "yes", 3);
-		else
-			child = add_mi_node_child(node, 0, "VERIFY_CERT", 11, "no", 2);
-		if (child == NULL) goto error;
+		if (add_mi_bool(domain_item, MI_SSTR("VERIFY_CERT"), d->verify_cert) < 0)
+			goto error;
 
-		if (d->require_client_cert)
-			child = add_mi_node_child(node, 0, "REQ_CLI_CERT", 12, "yes", 3);
-		else
-			child = add_mi_node_child(node, 0, "REQ_CLI_CERT", 12, "no", 2);
-		if (child == NULL) goto error;
+		if (add_mi_bool(domain_item, MI_SSTR("REQ_CLI_CERT"), d->require_client_cert) < 0)
+			goto error;
 
-		if (d->crl_check_all)
-			child = add_mi_node_child(node, 0, "CRL_CHECKALL", 12, "yes", 3);
-		else
-			child = add_mi_node_child(node, 0, "CRL_CHECKALL", 12, "no", 2);
-		if (child == NULL) goto error;
+		if (add_mi_bool(domain_item, MI_SSTR("CRL_CHECKALL"), d->crl_check_all) < 0)
+			goto error;
 
-		if (!(d->flags & DOM_FLAG_DB)) {
-			child = add_mi_node_child(node, MI_DUP_VALUE, "CERT_FILE", 9,
-				d->cert.s, d->cert.len);
-			if (child == NULL) goto error;
-		}
+		if (!(d->flags & DOM_FLAG_DB))
+			if (add_mi_string(domain_item, MI_SSTR("CERT_FILE"),
+				d->cert.s, d->cert.len) < 0)
+				goto error;
 
-		child = add_mi_node_child(node, MI_DUP_VALUE, "CRL_DIR", 7,
-			d->crl_directory, len(d->crl_directory));
-		if (child == NULL) goto error;
+		if (add_mi_string(domain_item, MI_SSTR("CRL_DIR"),
+			d->crl_directory, len(d->crl_directory)) < 0)
+			goto error;
 
-		if (!(d->flags & DOM_FLAG_DB)) {
-			child = add_mi_node_child(node, MI_DUP_VALUE, "CA_FILE", 7,
-				d->ca.s, d->ca.len);
-			if (child == NULL) goto error;
-		}
-		child = add_mi_node_child(node, MI_DUP_VALUE, "CA_DIR", 6,
-			d->ca_directory, len(d->ca_directory));
-		if (child == NULL) goto error;
+		if (!(d->flags & DOM_FLAG_DB))
+			if (add_mi_string(domain_item, MI_SSTR("CA_FILE"),
+				d->ca.s, d->ca.len) < 0)
+				goto error;
 
-		if (!(d->flags & DOM_FLAG_DB)) {
-			child = add_mi_node_child(node, MI_DUP_VALUE, "PKEY_FILE", 9,
-				d->pkey.s, d->pkey.len);
+		if (add_mi_string(domain_item, MI_SSTR("CA_DIR"),
+			d->ca_directory, len(d->ca_directory)) < 0)
+			goto error;
 
-			if (child == NULL) goto error;
-		}
-		child = add_mi_node_child(node, MI_DUP_VALUE, "CIPHER_LIST", 11,
-			d->ciphers_list, len(d->ciphers_list));
+		if (!(d->flags & DOM_FLAG_DB))
+			if (add_mi_string(domain_item, MI_SSTR("PKEY_FILE"),
+				d->pkey.s, d->pkey.len) < 0)
+				goto error;
 
-		if (child == NULL) goto error;
+		if (add_mi_string(domain_item, MI_SSTR("CIPHER_LIST"),
+			d->ciphers_list, len(d->ciphers_list)) < 0)
+			goto error;
 
-		if (!(d->flags & DOM_FLAG_DB)) {
-			child = add_mi_node_child(node, MI_DUP_VALUE, "DH_PARAMS_FILE", 9,
-				d->dh_param.s, d->dh_param.len);
-		}
-		if (child == NULL) goto error;
+		if (!(d->flags & DOM_FLAG_DB))
+			if (add_mi_string(domain_item, MI_SSTR("DH_PARAMS_FILE"),
+				d->dh_param.s, d->dh_param.len) < 0)
+				goto error;
 
-		child = add_mi_node_child(node, MI_DUP_VALUE, "EC_CURVE", 8,
-			d->tls_ec_curve, len(d->tls_ec_curve));
+		if (add_mi_string(domain_item, MI_SSTR("EC_CURVE"),
+			d->tls_ec_curve, len(d->tls_ec_curve)) < 0)
+			goto error;
 
-		if (child == NULL) goto error;
 		d = d->next;
-
 	}
+
 	return 0;
+
 error:
+	LM_ERR("Failed to add mi item\n");
 	return -1;
 }
 
 /* lists all domains */
-static struct mi_root * tls_list(struct mi_root *cmd_tree, void *param)
+static mi_response_t *tls_list(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_node *root = NULL;
-	struct mi_root *rpl_tree = NULL;
+	mi_response_t *resp;
+	mi_item_t *resp_obj, *domains_arr;
 
-	rpl_tree = init_mi_tree(200, MI_OK_S, MI_OK_LEN);
-	if (rpl_tree == NULL) {
-		return NULL;
-	}
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
+		return 0;
 
 	if (dom_lock)
 		lock_start_read(dom_lock);
 
-	root = &rpl_tree->node;
-
-	if (list_domain(root, *tls_client_domains) < 0)
+	domains_arr = add_mi_array(resp_obj, MI_SSTR("Domains"));
+	if (!domains_arr)
 		goto error;
 
-	if (list_domain(root, *tls_server_domains) < 0)
+	if (list_domain(domains_arr, *tls_client_domains) < 0)
+		goto error;
+
+	if (list_domain(domains_arr, *tls_server_domains) < 0)
 		goto error;
 
 	if (dom_lock)
 		lock_stop_read(dom_lock);
 
-	return rpl_tree;
+	return resp;
+
 error:
 	if (dom_lock)
 		lock_stop_read(dom_lock);
-	if (rpl_tree) free_mi_tree(rpl_tree);
+	free_mi_response(resp);
 	return NULL;
 }
 

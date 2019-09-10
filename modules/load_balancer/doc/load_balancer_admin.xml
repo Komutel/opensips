@@ -106,7 +106,7 @@
 			</listitem>
 			<listitem>
 			<para>
-				<emphasis>clustere</emphasis> - only if "status_replication_cluster"
+				<emphasis>clusterer</emphasis> - only if "cluster_id"
 				option is enabled.
 			</para>
 			</listitem>
@@ -332,8 +332,9 @@ modparam("load_balancer", "lb_define_blacklist", "blist2= 2,10,6")
 		using statistics pushed by the FreeSWITCH box.
 		</para>
 		<para>
-		The max value of a resource is updated every 20 seconds, as the stats
-		arrive from FreeSWITCH.
+		The max value of a resource is updated every <emphasis>event_heartbeat_interval</emphasis>
+		seconds (see the "freeswitch" OpenSIPS module for more details
+		regarding this setting), as the stats arrive from FreeSWITCH.
 	</para>
 	<para>
 		Given the following format for FreeSWITCH heartbeat messages:
@@ -396,30 +397,78 @@ modparam("load_balancer", "initial_freeswitch_load", 200)
 		</example>
 	</section>
 
-	<section id="param_status_replication_cluster" xreflabel="status_replication_cluster">
-		<title><varname>status_replication_cluster</varname> (integer)</title>
+	<section id="param_cluster_id" xreflabel="cluster_id">
+		<title><varname>cluster_id</varname> (integer)</title>
 		<para>
-		A cluster ID for sharing any change in the status of the destinations with other
-		OpenSIPS instances that are part of a cluster. Whenever such a status changes
-		(following an MI command, a probing result, a script command), the
-		module will replicate this status change to all the nodes in the
-		given cluster. A value of 0 means that sending replication data is disabled.
+		The ID of the cluster the module is part of. The clustering support is 
+		used in load-balancer module for two purposes: for sharing the status 
+		of the destinations and for controlling the pinging to destinations.
 		</para>
 		<para>
-		For more info on how to define and populate a cluster (with OpenSIPS nodes)
-		see the "clusterer" module.
+		If clustering enbled, the module will automatically share changes
+		over the status of the destinations with the other 
+		OpenSIPS instances that are part of a cluster. Whenever such a status 
+		changes (following an MI command, a probing result, a script command),
+		the module will replicate this status change to all the nodes in this 
+		given cluster.
+		</para>
+		<para>
+		The clustering with sharing tag support may be used to control which 
+		node in the cluster will perform the pinging/probing to 
+		destinations. See the
+		<xref linkend="param_cluster_sharing_tag"/> option.
+		</para>
+		<para>
+		For more info on how to define and populate a cluster (with OpenSIPS 
+		nodes) see the "clusterer" module.
 		</para>
 		<para>
 		<emphasis>
-			Default value is <quote>0</quote>.
+			Default value is <quote>0 (none)</quote>.
 		</emphasis>
 		</para>
 		<example>
-		<title>Set <varname>status_replication_cluster</varname> parameter</title>
+		<title>Set <varname>cluster_id</varname> parameter</title>
 		<programlisting format="linespecific">
 ...
-# replicate LB status with all OpenSIPS in cluster ID 9
-modparam("load_balancer", "status_replication_cluster", 9)
+# replicate destination status with all OpenSIPS in cluster ID 9
+modparam("load_balancer", "cluster_id", 9)
+...
+</programlisting>
+		</example>
+	</section>
+
+	<section id="param_cluster_sharing_tag" xreflabel="cluster_sharing_tag">
+		<title><varname>cluster_sharing_tag</varname> (string)</title>
+		<para>
+		The name of the sharing tag (as defined per clusterer modules) to 
+		control which node is responsible for perform the self-triggered
+		actions in the module. Such actions may be the destination probing or 
+		sharing the changes in the destination status.
+		If defined, only the node with active status of this tag will 
+		perform the actions (pinging and sharing status).
+		</para>
+		<para>
+		The <xref linkend="param_cluster_id"/> must be defined for this option
+		to work.
+		</para>
+		<para>
+		This is an optional parameter. If not set, all the nodes in the cluster
+		will individually do the probing and share the status changes.
+		</para>
+		<para>
+		<emphasis>
+			Default value is <quote>empty (none)</quote>.
+		</emphasis>
+		</para>
+		<example>
+		<title>Set <varname>cluster_sharing_tag</varname> parameter</title>
+		<programlisting format="linespecific">
+...
+# only the node with the active "vip" sharing tag will perform pinging
+# and broadcast the status changes
+modparam("load_balancer", "cluster_id", 9)
+modparam("load_balancer", "cluster_sharing_tag", "vip")
 ...
 </programlisting>
 		</example>
@@ -443,21 +492,21 @@ modparam("load_balancer", "status_replication_cluster", 9)
 		<para>Meaning of the parameters is as follows:</para>
 		<itemizedlist>
 		<listitem>
-			<para><emphasis>grp</emphasis> - group id for the destinations; the
-			destination may be grouped in several groups you can you for 
-			differnet scenarios; this can be a number or a variable containing
-			a numerical value.
+			<para><emphasis>grp</emphasis> (int) - group id for the destinations;
+			the destination may be grouped in several groups you can you for 
+			differnet scenarios.
 			</para>
 		</listitem>
 		<listitem>
-			<para><emphasis>resources</emphasis> - string containing a 
+			<para><emphasis>resources</emphasis> (string) - a 
 			semi-colon separated list of resources required by the current
 			call.
 			</para>
 		</listitem>
 		<listitem>
-			<para><emphasis>flags</emphasis> - various flags to controll the
-			LB algorithm ( or computing the available load on the system):
+			<para><emphasis>flags</emphasis> (string, optional) - various flags
+			to controll the LB algorithm ( or computing the available load on
+			the system):
 			</para>
 			<itemizedlist>
 			<listitem>
@@ -529,7 +578,7 @@ modparam("load_balancer", "status_replication_cluster", 9)
 		<title><function>lb_start</function> usage</title>
 		<programlisting format="linespecific">
 ...
-if (lb_start("1","trascoding;conference")) {
+if (lb_start(1,"trascoding;conference")) {
 	# dst URI points to the new destination
 	xlog("sending call to $du\n");
 	t_relay();
@@ -653,7 +702,7 @@ if (t_check_status("(5[0-9][0-9])")) {
 	}
 } else if (t_check_status("(408)")) {
 	lb_reset();
-	if (lb_start("1","conference")) {
+	if (lb_start(1,"conference")) {
 		t_relay();
 		exit;
 	}
@@ -701,7 +750,7 @@ if (t_check_status("(408)|(5[0-9][0-9])")) {
 		xlog("-----------new dst is $du\n");
 		t_relay();
 	} else {
-		t_reply("500","Error");
+		t_reply(500,"Error");
 	}
 }
 
@@ -727,20 +776,22 @@ if (t_check_status("(408)|(5[0-9][0-9])")) {
 		<para>Meaning of the parameters is as follows:</para>
 		<itemizedlist>
 		<listitem>
-			<para><emphasis>ip</emphasis> and <emphasis>port</emphasis> - IP 
-			and PORT to be checked (any kind of variables are allowed, but
-			take care as the PORT variables should have an integer value); 
-			A value 0 for the port means "any" - will match any port.
+			<para><emphasis>ip</emphasis> (string) - IP to be checked
 			</para>
 		</listitem>
 		<listitem>
-			<para><emphasis>group</emphasis> - in what LB group the destination
-			should be looked for; If not specified, the search will be in
-			all groups.
+			<para><emphasis>port</emphasis> (int) - PORT to be checked. 
+			A value 0 means "any" - will match any port.
 			</para>
 		</listitem>
 		<listitem>
-			<para><emphasis>active</emphasis> - if "1", the search will be
+			<para><emphasis>group</emphasis> (int, optional) - in what LB group
+			the destination should be looked for; If not specified, the search
+			will be in all groups.
+			</para>
+		</listitem>
+		<listitem>
+			<para><emphasis>active</emphasis>  (int, optional)- if "1", the search will be
 			performed only over "active" (not disabled) destinations. If 
 			missing, the search will consider any kind of destinations.
 			</para>
@@ -752,7 +803,7 @@ if (t_check_status("(408)|(5[0-9][0-9])")) {
 		<title><function>lb_is_destination</function> usage</title>
 		<programlisting format="linespecific">
 ...
-if (lb_is_destination("$si","$sp") ) {
+if (lb_is_destination($si,$sp) ) {
 	# request from a LB destination
 }
 ...
@@ -773,23 +824,27 @@ if (lb_is_destination("$si","$sp") ) {
 		<para>Meaning of the parameters is as follows:</para>
 		<itemizedlist>
 		<listitem>
-			<para><emphasis>ip</emphasis> and <emphasis>port</emphasis> - IP 
-			and PORT to identify the destination the call has to be counted
-			for.
+			<para><emphasis>ip</emphasis> (string) - IP to identify the destination
+			the call has to be counted for.
 			</para>
 		</listitem>
 		<listitem>
-			<para><emphasis>grp</emphasis> - group id for the destinations; if
+			<para><emphasis>port</emphasis> (int) - PORT to identify the destination
+			the call has to be counted for.
+			</para>
+		</listitem>
+		<listitem>
+			<para><emphasis>grp</emphasis> (int) - group id for the destinations; if
 			no knows, "-1" will mean all groups.
 			</para>
 		</listitem>
 		<listitem>
-			<para><emphasis>resources</emphasis> - string containing a 
-			semi-colon separated list of resources required by the current call.
+			<para><emphasis>resources</emphasis> - (string) a semi-colon separated
+			list of resources required by the current call.
 			</para>
 		</listitem>
 		<listitem>
-			<para><emphasis>undo</emphasis> - (optional) if set to a non zero
+			<para><emphasis>undo</emphasis> - (int, optional) if set to a non zero
 			value, it will force the function to un-count -
 			actually it will undo the counting of this call as load in the 
 			current LB session; this might be needed if we count call for
@@ -810,13 +865,13 @@ if (lb_is_destination("$si","$sp") ) {
 		<programlisting format="linespecific">
 ...
 # count as load also the calls orgininated by lb destinations
-if (lb_is_destination("$si","$sp") ) {
+if (lb_is_destination($si,$sp) ) {
 	# inbound call from destination
-	lb_count_call("$si","$sp","-1","conference");
+	lb_count_call($si,$sp,-1,"conference");
 } else {
 	# outbound call to destinations
-	if ( !load_balance("1","conference") ) {
-		send_reply("503","unavailable");
+	if ( !load_balance(1,"conference") ) {
+		send_reply(503,"unavailable");
 		exit();
 	}
 	# dst URI points to the new destination
@@ -844,7 +899,7 @@ if (lb_is_destination("$si","$sp") ) {
 		MI FIFO Command Format:
 		</para>
 		<programlisting  format="linespecific">
-		opensipsctl fifo lb_reload
+		opensips-cli -x mi lb_reload
 		</programlisting>
 		</section>
 
@@ -869,7 +924,7 @@ if (lb_is_destination("$si","$sp") ) {
 		MI FIFO Command Format:
 		</para>
 		<programlisting  format="linespecific">
-		opensipsctl fifo lb_resize 11 voicemail 56
+		opensips-cli -x mi lb_resize 11 voicemail 56
 		</programlisting>
 		</section>
 
@@ -882,7 +937,7 @@ if (lb_is_destination("$si","$sp") ) {
 		<example>
 		<title><function>lb_list</function> usage</title>
 		<programlisting format="linespecific">
-$ ./opensipsctl fifo lb_list
+$ opensips-cli -x mi lb_list
 Destination:: sip:127.0.0.1:5100 id=1 enabled=yes auto-re=on
         Resource:: pstn max=3 load=0
         Resource:: transc max=5 load=1
@@ -915,10 +970,10 @@ Destination:: sip:127.0.0.1:5200 id=2 enabled=no auto-re=on
 		<example>
 		<title><function>lb_status</function> usage</title>
 		<programlisting format="linespecific">
-$ ./opensipsctl fifo lb_status 2
+$ opensips-cli -x mi lb_status 2
 enable:: no
-$ ./opensipsctl fifo lb_status 2 1
-$ ./opensipsctl fifo lb_status 2
+$ opensips-cli -x mi lb_status 2 1
+$ opensips-cli -x mi lb_status 2
 enable:: yes
 </programlisting>
 		</example>

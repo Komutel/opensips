@@ -108,8 +108,9 @@ Chapter 1. Admin Guide
    by an “id” string.
 
    The caching entry is specified via this parameter that has it's
-   own subparameters. Each of those parameters are separted by a
-   configurable delimiter and have the following format:
+   own subparameters. Each of those parameters are separated by a
+   delimiter configured by spec_delimiter and have the following
+   format:
 
    param_name=param_value
 
@@ -120,7 +121,8 @@ Chapter 1. Admin Guide
      * table : SQL database table name
      * key : SQL database column name of the “key” column
      * columns : names of the columns to be cached from the SQL
-       database, separated by a configurable delimiter
+       database, separated by a delimiter configured by
+       columns_delimiter.
        If not present, all the columns from the table will be
        cached
      * on_demand : specifies the type of caching:
@@ -219,7 +221,8 @@ modparam("sql_cacher", "full_caching_expire", 3600)
 1.3.7. reload_interval (integer)
 
    This parameter represents how many seconds before the data
-   expires (for full caching) the automatic reloading is triggerd.
+   expires (for full caching) the automatic reloading is
+   triggered.
 
    The default value is “60 s”.
 
@@ -242,15 +245,15 @@ modparam("sql_cacher", "reload_interval", 5)
    on demand mode.
 
    Parameters:
-     * id (optional) - the caching entry's id
+     * id - the caching entry's id
      * key (optional) - the specific key to be reloaded, only
        makes sense in on demand mode.
 
    Example 1.8. sql_cacher_reload usage
 ...
-$ opensipsctl fifo sql_cacher_reload subs_caching
+$ opensips-cli -x mi sql_cacher_reload subs_caching
 ...
-$ opensipsctl fifo sql_cacher_reload subs_caching alice@domain.com
+$ opensips-cli -x mi sql_cacher_reload subs_caching alice@domain.com
 ...
 
 1.6. Exported Pseudo-Variables
@@ -259,7 +262,7 @@ $ opensipsctl fifo sql_cacher_reload subs_caching alice@domain.com
 
    The cached data is available through this read-only PV.The
    format is the following:
-     * sep : separator configured by “pvar_delimiter” parameter
+     * sep : separator configured by pvar_delimiter
      * id : cache entry id
      * col : name of the required column
      * key : value of the “key” column
@@ -327,13 +330,14 @@ Chapter 2. Contributors
    Table 2.1. Top contributors by DevScore^(1), authored
    commits^(2) and lines added/removed^(3)
      Name DevScore Commits Lines ++ Lines --
-   1. Vlad Patrascu (@rvlad-patrascu) 72 27 3354 960
-   2. Liviu Chircu (@liviuchircu) 11 9 72 54
-   3. Razvan Crainea (@razvancrainea) 9 7 15 9
-   4. Ionel Cerghit (@ionel-cerghit) 4 1 50 92
-   5. Bogdan-Andrei Iancu (@bogdan-iancu) 3 1 3 3
-   6. Ovidiu Sas (@ovidiusas) 3 1 1 1
-   7. Peter Lemenkov (@lemenkov) 3 1 1 1
+   1. Vlad Patrascu (@rvlad-patrascu) 82 34 3519 1086
+   2. Liviu Chircu (@liviuchircu) 21 17 160 108
+   3. Razvan Crainea (@razvancrainea) 13 11 21 13
+   4. Bogdan-Andrei Iancu (@bogdan-iancu) 5 3 12 10
+   5. Ionel Cerghit (@ionel-cerghit) 4 1 50 92
+   6. Dan Pascu (@danpascu) 3 1 1 1
+   7. Ovidiu Sas (@ovidiusas) 3 1 1 1
+   8. Peter Lemenkov (@lemenkov) 3 1 1 1
 
    (1) DevScore = author_commits + author_lines_added /
    (project_lines_added / project_commits) + author_lines_deleted
@@ -355,13 +359,14 @@ Chapter 2. Contributors
 
    Table 2.2. Most recently active contributors^(1) to this module
                      Name                   Commit Activity
-   1. Vlad Patrascu (@rvlad-patrascu)     Aug 2015 - Aug 2018
-   2. Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
-   3. Liviu Chircu (@liviuchircu)         Mar 2016 - Jun 2018
-   4. Bogdan-Andrei Iancu (@bogdan-iancu) May 2017 - May 2017
-   5. Razvan Crainea (@razvancrainea)     Feb 2016 - Apr 2017
-   6. Ovidiu Sas (@ovidiusas)             Mar 2017 - Mar 2017
-   7. Ionel Cerghit (@ionel-cerghit)      Dec 2015 - Dec 2015
+   1. Razvan Crainea (@razvancrainea)     Feb 2016 - Aug 2019
+   2. Bogdan-Andrei Iancu (@bogdan-iancu) May 2017 - Aug 2019
+   3. Vlad Patrascu (@rvlad-patrascu)     Aug 2015 - Jul 2019
+   4. Dan Pascu (@danpascu)               May 2019 - May 2019
+   5. Liviu Chircu (@liviuchircu)         Mar 2016 - Nov 2018
+   6. Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
+   7. Ovidiu Sas (@ovidiusas)             Mar 2017 - Mar 2017
+   8. Ionel Cerghit (@ionel-cerghit)      Dec 2015 - Dec 2015
 
    (1) including any documentation-related commits, excluding
    merge commits
@@ -370,9 +375,9 @@ Chapter 3. Documentation
 
 3.1. Contributors
 
-   Last edited by: Peter Lemenkov (@lemenkov), Liviu Chircu
-   (@liviuchircu), Vlad Patrascu (@rvlad-patrascu), Bogdan-Andrei
-   Iancu (@bogdan-iancu).
+   Last edited by: Razvan Crainea (@razvancrainea), Vlad Patrascu
+   (@rvlad-patrascu), Liviu Chircu (@liviuchircu), Peter Lemenkov
+   (@lemenkov), Bogdan-Andrei Iancu (@bogdan-iancu).
 
    Documentation Copyrights:
 

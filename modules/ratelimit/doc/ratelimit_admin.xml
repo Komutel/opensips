@@ -50,8 +50,8 @@
 	</para>
 	<programlisting format="linespecific">
 ...
-	if (!rl_check("$rU", "50", "TAILDROP")) {
-		sl_send_reply("503", "Server Unavailable");
+	if (!rl_check($rU, 50, "TAILDROP")) {
+		sl_send_reply(503, "Server Unavailable");
 		exit;
 	};
 ...
@@ -506,7 +506,7 @@ modparam("ratelimit", "slot_period", 100)
 		specified when the pipe was created will be considered.
 		</para>
 		<para>
-		NOTE: This function increments the pipe's couter every time it is
+		NOTE: This function increments the pipe's counter every time it is
 		called, even if the call should be declined. Therefore If you are using
 		ratelimit to limit only successful traffic, you need to explicitely
 		decrease the counter for the declined calls using the
@@ -520,26 +520,23 @@ modparam("ratelimit", "slot_period", 100)
 		<itemizedlist>
 			<listitem>
 				<para>
-				<emphasis>name</emphasis> - this is the name that identifies
-				the pipe which should be checked. This parameter accepts both
-				strings and pseudovariables.
+				<emphasis>name</emphasis> (string) - this is the name that identifies
+				the pipe which should be checked.
 				</para>
 			</listitem>
 			<listitem>
 				<para>
-				<emphasis>limit</emphasis> - this specifies the threshold
+				<emphasis>limit</emphasis> (int) - this specifies the threshold
 				limit of the pipe. It is strongly related to the algorithm
-				used. This parameter accepts an integer or a pseudovariable.
-				Note that the limit should be specified as per-second, not
+				used. Note that the limit should be specified as per-second, not
 				per-timer_interval.
 				</para>
 			</listitem>
 			<listitem>
 				<para>
-				<emphasis>algorithm</emphasis> - this is parameter is optional
-				and reffers to the algorithm used to check the pipe. If it is
-				not set, the default value is used. It accepts a string or a
-				pseudovariable.
+				<emphasis>algorithm</emphasis> (string, optional) - this parameter
+				reffers to the algorithm used to check the pipe. If it is
+				not set, the default value is used.
 				</para>
 			</listitem>
 
@@ -554,23 +551,23 @@ modparam("ratelimit", "slot_period", 100)
 ...
 	# perform a pipe match for all INVITE methods using RED algorithm
 	if (is_method("INVITE")) {
-		if (!rl_check("pipe_INVITE", "100", "RED")) {
-			sl_send_reply("503", "Server Unavailable");
+		if (!rl_check("pipe_INVITE", 100, "RED")) {
+			sl_send_reply(503, "Server Unavailable");
 			exit;
 		};
 	};
 ...
 	# use default algorithm for each different gateway
 	$var(limit) = 10;
-	if (!rl_check("gw_$ru", "$var(limit)")) {
-		sl_send_reply("503", "Server Unavailable");
+	if (!rl_check("gw_$ru", $var(limit))) {
+		sl_send_reply(503, "Server Unavailable");
 		exit;
 	};
 ...
 	# count only successful calls
-	if (!rl_check("gw_$ru", "100")) {
+	if (!rl_check("gw_$ru", 100)) {
 		rl_dec_count("gw_$ru");
-		sl_send_reply("503", "Server Unavailable");
+		sl_send_reply(503, "Server Unavailable");
 		exit;
 	};
 ...
@@ -588,7 +585,7 @@ modparam("ratelimit", "slot_period", 100)
 		<para>Meaning of the parameters is as follows:</para>
 		<itemizedlist>
 			<listitem><para>
-			<emphasis>name</emphasis> - identifies the name of the pipe.
+			<emphasis>name</emphasis> (string) - identifies the name of the pipe.
 			</para>
 			</listitem>
 		</itemizedlist>
@@ -600,7 +597,7 @@ modparam("ratelimit", "slot_period", 100)
 		<title><function>rl_dec_count</function> usage</title>
 		<programlisting format="linespecific">
 ...
-	if (!rl_check("gw_$ru", "100", "TAILDROP")) {
+	if (!rl_check("gw_$ru", 100, "TAILDROP")) {
 		exit;
 	} else {
 		rl_dec_count("gw_$ru");
@@ -632,7 +629,7 @@ modparam("ratelimit", "slot_period", 100)
 		<title><function>rl_reset_count</function> usage</title>
 		<programlisting format="linespecific">
 ...
-	if (!rl_check("gw_$ru", "100", "TAILDROP")) {
+	if (!rl_check("gw_$ru", 100, "TAILDROP")) {
 		exit;
 	} else {
 		rl_reset_count("gw_$ru");
@@ -668,7 +665,7 @@ modparam("ratelimit", "slot_period", 100)
 		MI FIFO Command Format:
 		</para>
 		<programlisting  format="linespecific">
-		opensipsctl fifo rl_list gw_10.0.0.1
+		opensips-cli -x mi rl_list gw_10.0.0.1
 		</programlisting>
 	</section>
 	<section id="mi_rl_reset_pipe" xreflabel="rl_reset_pipe">
@@ -685,14 +682,14 @@ modparam("ratelimit", "slot_period", 100)
 		<itemizedlist>
 			<listitem><para>
 			<emphasis>pipe</emphasis> - indicates the name of the pipe whose
-			couter should be reset.
+			counter should be reset.
 			</para></listitem>
 		</itemizedlist>
 		<para>
 		MI FIFO Command Format:
 		</para>
 		<programlisting  format="linespecific">
-		opensipsctl fifo rl_reset_pipe gw_10.0.0.1
+		opensips-cli -x mi rl_reset_pipe gw_10.0.0.1
 		</programlisting>
 	</section>
 	<section id="mi_rl_set_pid" xreflabel="rl_set_pid">
@@ -721,7 +718,7 @@ modparam("ratelimit", "slot_period", 100)
 		MI FIFO Command Format:
 		</para>
 		<programlisting  format="linespecific">
-		opensipsctl fifo rl_set_pid 0.5 0.5 0.5
+		opensips-cli -x mi rl_set_pid 0.5 0.5 0.5
 		</programlisting>
 	</section>
 	<section id="mi_rl_get_pid" xreflabel="rl_get_pid">
@@ -739,7 +736,7 @@ modparam("ratelimit", "slot_period", 100)
 		MI FIFO Command Format:
 		</para>
 		<programlisting  format="linespecific">
-		opensipsctl fifo rl_get_pid
+		opensips-cli -x mi rl_get_pid
 		</programlisting>
 	</section>
 	<section id="mi_rl_bin_status" xreflabel="rl_bin_status">
@@ -758,7 +755,7 @@ modparam("ratelimit", "slot_period", 100)
 		MI FIFO Command Format:
 		</para>
 		<programlisting  format="linespecific">
-		opensipsctl fifo rl_bin_status
+		opensips-cli -x mi rl_bin_status
 		</programlisting>
 	</section>
 	</section>

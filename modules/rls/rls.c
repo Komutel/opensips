@@ -64,8 +64,8 @@ db_con_t *rls_db = NULL;
 db_func_t rls_dbf;
 
 /** modules variables */
-str server_address= {0, 0};
-str presence_server= {0, 0};
+str contact_user = str_init("rls");
+str presence_server = {NULL, 0};
 int waitn_time = 50;
 str rlsubs_table= str_init("rls_watchers");
 str rlpres_table= str_init("rls_presentity");
@@ -165,17 +165,20 @@ int rlsubs_table_restore();
 void rlsubs_table_update(unsigned int ticks,void *param);
 int add_rls_event(modparam_t type, void* val);
 int parse_xcap_root(void);
-static struct mi_root* mi_update_subscriptions(struct mi_root* cmd, void* param);
+mi_response_t *mi_update_subscriptions(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
-static cmd_export_t cmds[]=
-{
-	{"rls_handle_subscribe",     (cmd_function)rls_handle_subscribe, 0, 0,               0, REQUEST_ROUTE},
-	{"rls_handle_notify",        (cmd_function)rls_handle_notify,    0, 0,               0, REQUEST_ROUTE},
-	{0, 0, 0, 0, 0, 0 }
+
+static cmd_export_t cmds[]={
+	{"rls_handle_subscribe",     (cmd_function)rls_handle_subscribe, {{0,0,0}},
+		REQUEST_ROUTE},
+	{"rls_handle_notify",        (cmd_function)rls_handle_notify, {{0,0,0}},
+		REQUEST_ROUTE},
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t params[]={
-	{ "server_address",         STR_PARAM, &server_address.s           },
+	{ "contact_user",           STR_PARAM, &contact_user.s             },
 	{ "presence_server",        STR_PARAM, &presence_server.s          },
 	{ "rlsubs_table",           STR_PARAM, &rlsubs_table.s             },
 	{ "rlpres_table",           STR_PARAM, &rlpres_table.s             },
@@ -191,8 +194,11 @@ static param_export_t params[]={
 };
 
 static mi_export_t mi_cmds[] = {
-	{ "rls_update_subscriptions", 0, mi_update_subscriptions, 0,  0,  0},
-	{  0, 0, 0, 0,  0, 0}
+	{ "rls_update_subscriptions", 0, 0, 0, {
+		{mi_update_subscriptions, {"presentity_uri", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 static dep_export_t deps = {
@@ -215,7 +221,9 @@ struct module_exports exports= {
 	MOD_TYPE_DEFAULT,           /* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS,            /* dlopen flags */
+	0,				            /* load function */
 	&deps,                      /* OpenSIPS module dependencies */
+	0,                          /* OpenSIPS dependencies function */
 	cmds,                       /* exported functions */
 	0,                          /* exported async functions */
 	params,                     /* exported parameters */
@@ -227,7 +235,8 @@ struct module_exports exports= {
 	mod_init,                   /* module initialization function */
 	(response_function) 0,      /* response handling function */
 	(destroy_function) destroy, /* destroy function */
-	child_init                  /* per-child init function */
+	child_init,                 /* per-child init function */
+	0                           /* reload confirm function */
 };
 
 /**
@@ -248,35 +257,30 @@ static int mod_init(void)
 
 	LM_DBG("start\n");
 
-	if(!server_address.s)
+	contact_user.len = strlen(contact_user.s);
+
+	if (presence_server.s)
+		presence_server.len = strlen(presence_server.s);
+
+	/* load XCAP API */
+	bind_xcap = (bind_xcap_t)find_export("bind_xcap", 0);
+	if (!bind_xcap)
 	{
-		LM_ERR("server_address parameter not set in configuration file\n");
+		LM_ERR("Can't bind xcap\n");
 		return -1;
 	}
-	server_address.len= strlen(server_address.s);
 
-	if(presence_server.s)
-		presence_server.len= strlen(presence_server.s);
-
-        /* load XCAP API */
-        bind_xcap = (bind_xcap_t)find_export("bind_xcap", 1, 0);
-        if (!bind_xcap)
-        {
-                LM_ERR("Can't bind xcap\n");
-                return -1;
-        }
-
-        if (bind_xcap(&xcap_api) < 0)
-        {
-                LM_ERR("Can't bind xcap\n");
-                return -1;
-        }
-        rls_integrated_xcap_server = xcap_api.integrated_server;
-        db_url = xcap_api.db_url;
-        rls_xcap_table = xcap_api.xcap_table;
-        normalizeSipUri = xcap_api.normalize_sip_uri;
-        xcapParseUri = xcap_api.parse_xcap_uri;
-        xcapDbGetDoc = xcap_api.get_xcap_doc;
+	if (bind_xcap(&xcap_api) < 0)
+	{
+		LM_ERR("Can't bind xcap\n");
+		return -1;
+	}
+	rls_integrated_xcap_server = xcap_api.integrated_server;
+	db_url = xcap_api.db_url;
+	rls_xcap_table = xcap_api.xcap_table;
+	normalizeSipUri = xcap_api.normalize_sip_uri;
+	xcapParseUri = xcap_api.parse_xcap_uri;
+	xcapDbGetDoc = xcap_api.get_xcap_doc;
 
 	if(!rls_integrated_xcap_server)
 	{
@@ -305,7 +309,7 @@ static int mod_init(void)
 		LM_ERR("can't load tm functions\n");
 		return -1;
 	}
-	bind_presence= (bind_presence_t)find_export("bind_presence", 1,0);
+	bind_presence= (bind_presence_t)find_export("bind_presence",0);
 	if (!bind_presence)
 	{
 		LM_ERR("Can't bind presence\n");
@@ -396,7 +400,7 @@ static int mod_init(void)
 
 	/* bind libxml wrapper functions */
 
-	if((bind_libxml=(bind_libxml_t)find_export("bind_libxml_api", 1, 0))== NULL)
+	if((bind_libxml=(bind_libxml_t)find_export("bind_libxml_api", 0))== NULL)
 	{
 		LM_ERR("can't import bind_libxml_api\n");
 		return -1;
@@ -409,7 +413,7 @@ static int mod_init(void)
 	XMLNodeGetAttrContentByName= libxml_api.xmlNodeGetAttrContentByName;
 	XMLDocGetNodeByName= libxml_api.xmlDocGetNodeByName;
 	XMLNodeGetNodeByName= libxml_api.xmlNodeGetNodeByName;
-    XMLNodeGetNodeContentByName= libxml_api.xmlNodeGetNodeContentByName;
+	XMLNodeGetNodeContentByName= libxml_api.xmlNodeGetNodeContentByName;
 
 	if(XMLNodeGetAttrContentByName== NULL || XMLDocGetNodeByName== NULL ||
 			XMLNodeGetNodeByName== NULL || XMLNodeGetNodeContentByName== NULL)
@@ -419,7 +423,7 @@ static int mod_init(void)
 	}
 
 	/* bind pua */
-	bind_pua= (bind_pua_t)find_export("bind_pua", 1,0);
+	bind_pua= (bind_pua_t)find_export("bind_pua",0);
 	if (!bind_pua)
 	{
 		LM_ERR("Can't bind pua\n");
@@ -455,7 +459,7 @@ static int mod_init(void)
 	if(!rls_integrated_xcap_server)
 	{
 		/* bind xcap */
-		bind_xcap_client = (bind_xcap_client_t)find_export("bind_xcap_client", 1, 0);
+		bind_xcap_client = (bind_xcap_client_t)find_export("bind_xcap_client", 0);
 		if (!bind_xcap_client)
 		{
 			LM_ERR("Can't bind xcap_client\n");
@@ -821,70 +825,58 @@ int add_rls_event(modparam_t type, void* val)
 
 static void update_subs(subs_t *subs)
 {
-        xmlDocPtr doc = NULL;
-        xmlNodePtr service_node = NULL;
+	xmlDocPtr doc = NULL;
+	xmlNodePtr service_node = NULL;
 
-        if ((subs->expires -= (int)time(NULL)) <= 0)
-        {
-                LM_WARN("found expired subscription for: %.*s\n",
-                        subs->pres_uri.len, subs->pres_uri.s);
-                goto done;
-        }
+	if ((subs->expires -= (int)time(NULL)) <= 0)
+	{
+		LM_WARN("found expired subscription for: %.*s\n",
+				subs->pres_uri.len, subs->pres_uri.s);
+		goto done;
+	}
 
-        if(get_resource_list(&subs->pres_uri, subs->from_user,
-                                subs->from_domain, &service_node, &doc) < 0)
-        {
-                LM_ERR("failed getting resource list for: %.*s\n",
-                        subs->pres_uri.len, subs->pres_uri.s);
-                goto done;
-        }
-        if(doc==NULL)
-        {
-                LM_WARN("no document returned for: %.*s\n",
-                        subs->pres_uri.len, subs->pres_uri.s);
-                goto done;
-        }
+	if(get_resource_list(&subs->pres_uri, subs->from_user,
+						 subs->from_domain, &service_node, &doc) < 0)
+	{
+		LM_ERR("failed getting resource list for: %.*s\n",
+			   subs->pres_uri.len, subs->pres_uri.s);
+		goto done;
+	}
+	if(doc==NULL)
+	{
+		LM_WARN("no document returned for: %.*s\n",
+				subs->pres_uri.len, subs->pres_uri.s);
+		goto done;
+	}
 
-        subs->internal_update_flag = 1;
+	subs->internal_update_flag = 1;
 
-        if(resource_subscriptions(subs, service_node) < 0)
-        {
-                LM_ERR("failed sending subscribe requests to resources in list\n");
-                goto done;
-        }
+	if(resource_subscriptions(subs, service_node) < 0)
+	{
+		LM_ERR("failed sending subscribe requests to resources in list\n");
+		goto done;
+	}
 
 done:
-        if (doc != NULL)
-                xmlFreeDoc(doc);
+	if (doc != NULL)
+		xmlFreeDoc(doc);
 }
 
-
-static struct mi_root* mi_update_subscriptions(struct mi_root* cmd, void* param)
+mi_response_t *mi_update_subscriptions(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_node* node = NULL;
 	struct sip_uri parsed_uri;
 	str uri;
 	int i;
-        subs_t *subs, *subs_copy;
+	subs_t *subs, *subs_copy;
 
-	LM_DBG("start\n");
+	if (get_mi_string_param(params, "presentity_uri", &uri.s, &uri.len) < 0)
+		return init_mi_param_error();
 
-	node = cmd->node.kids;
-	if(node == NULL)
-		return init_mi_tree(404, "No parameters", 13);
-
-	/* Get presentity URI */
-	uri = node->value;
 	if(uri.s == NULL || uri.len== 0)
 	{
 		LM_ERR( "empty uri\n");
-		return init_mi_tree(404, "Empty presentity URI", 20);
-	}
-
-	if(node->next!= NULL)
-	{
-		LM_ERR( "Too many parameters\n");
-		return init_mi_tree(400, "Too many parameters", 19);
+		return init_mi_error(404, MI_SSTR("Empty presentity URI"));
 	}
 
 	if (parse_uri(uri.s, uri.len, &parsed_uri) < 0)
@@ -913,9 +905,9 @@ static struct mi_root* mi_update_subscriptions(struct mi_root* cmd, void* param)
 		while (subs != NULL)
 		{
 			if (subs->from_user.len == parsed_uri.user.len &&
-			    strncmp(subs->from_user.s, parsed_uri.user.s, parsed_uri.user.len) == 0 &&
-			    subs->from_domain.len == parsed_uri.host.len &&
-			    strncmp(subs->from_domain.s, parsed_uri.host.s, parsed_uri.host.len) == 0)
+				strncmp(subs->from_user.s, parsed_uri.user.s, parsed_uri.user.len) == 0 &&
+				subs->from_domain.len == parsed_uri.host.len &&
+				strncmp(subs->from_domain.s, parsed_uri.host.s, parsed_uri.host.len) == 0)
 			{
 				subs_copy = NULL;
 
@@ -937,7 +929,7 @@ static struct mi_root* mi_update_subscriptions(struct mi_root* cmd, void* param)
 		lock_release(&rls_table[i].lock);
 	}
 
-	return init_mi_tree( 200, MI_OK_S, MI_OK_LEN);
+	return init_mi_result_ok();
 }
 
 

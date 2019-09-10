@@ -60,6 +60,7 @@ author_aliases=(
   ["Daniel-Constantin Mierla <daniel@voice-system.ro>"]="Daniel-Constantin Mierla <miconda@gmail.com>"
   ["davesidwell <davesidwell@users.noreply.github.com>"]="Dave Sidwell <davesidwell@users.noreply.github.com>"
   ["Eric Tamme <eric@uphreak.com>"]="Eric Tamme <eric.tamme@onsip.com>"
+  ["Fabian Gast <fgast+git@only640k.net>"]="Fabian Gast <fabian.gast@nfon.com>"
   ["Henning Westerholt"]="Henning Westerholt <henning.westerholt@1und1.de>"
   ["Ionut Ionita <ionutrazvan.ionita@gmail.com>"]="Ionut Ionita <ionutionita@opensips.org>"
   ["Ionut Ionita <ionut.ionita@cti.pub.ro>"]="Ionut Ionita <ionutionita@opensips.org>"
@@ -79,6 +80,7 @@ author_aliases=(
   ["Oliver Severin Mulelid-Tynes"]="Oliver Severin Mulelid-Tynes <olivermt@users.noreply.github.com>"
   ["Parantido De Rica <Parantido@users.noreply.github.com>"]="Parantido Julius De Rica <parantido@techfusion.it>"
   ["Peter Lemenkov"]="Peter Lemenkov <lemenkov@gmail.com>"
+  ["pasandev <pasandev@ymail.com>"]="Pasan Meemaduma <pasandev@ymail.com>"
   ["Ryan Bullock"]="Ryan Bullock <rrb3942@gmail.com>"
   ["Răzvan Crainea <razvan@opensips.org>"]="Razvan Crainea <razvan@opensips.org>"
   ["Răzvan Crainea <razvan.crainea@gmail.com>"]="Razvan Crainea <razvan@opensips.org>"
@@ -110,9 +112,11 @@ author_aliases=(
 declare -A github_handles
 github_handles=(
   ["Agalya Ramachandran"]="AgalyaR"
-  ["Andrey Vorobiev <andrey.o.vorobiev@gmail.com>"]="andrey-vorobiev"
   ["Alexandr Dubovikov <voip@start4.info>"]="adubovikov"
+  ["Alexey Vasilyev <alexei.vasilyev@gmail.com>"]="vasilevalex"
   ["Andrei Datcu <datcuandrei@gmail.com>"]="andrei-datcu"
+  ["Andrey Vorobiev <andrey.o.vorobiev@gmail.com>"]="andrey-vorobiev"
+  ["Aron Podrigal <aronp@guaranteedplus.com>"]="ar45"
   ["Bogdan-Andrei Iancu"]="bogdan-iancu"
   ["Chad Attermann"]="attermann"
   ["Christophe Sollet"]="csollet"
@@ -124,6 +128,9 @@ github_handles=(
   ["Eric Tamme"]="etamme"
   ["Eseanu Marius Cristian <eseanu.cristian@gmail.com>"]="eseanucristian"
   ["Evandro Villaron"]="evillaron"
+  ["Fabian Gast"]="fgast"
+  ["Federico Edorna <fedorna@anura.com.ar>"]="fedorna"
+  ["Gohar Ahmed <gahmed@saevolgo.ca>"]="goharahmed"
   ["Henning Westerholt"]="henningw"
   ["Ionel Cerghit"]="ionel-cerghit"
   ["Ionut Ionita"]="ionutrazvanionita"
@@ -131,6 +138,7 @@ github_handles=(
   ["Jan Janak"]="janakj"
   ["Jarrod Baumann"]="jarrodb"
   ["Jiri Kuthan <jiri@iptel.org>"]="jiriatipteldotorg"
+  ["John Kiniston <johnk@simplybits.com>"]="SB-JohnK"
   ["Juha Heinanen"]="juha-h"
   ["Kobi Eshun <kobi@sightspeed.com>"]="ekobi"
   ["Liviu Chircu"]="liviuchircu"
@@ -141,14 +149,16 @@ github_handles=(
   ["Oliver Mulelid-Tynes"]="olivermt"
   ["Ovidiu Sas"]="ovidiusas"
   ["Parantido Julius De Rica"]="Parantido"
+  ["Pasan Meemaduma"]="pasanmdev"
   ["Peter Lemenkov"]="lemenkov"
   ["Razvan Crainea"]="razvancrainea"
   ["Rob Gagnon"]="rgagnon24"
   ["Robison Tesini"]="rtesini"
   ["Ryan Bullock"]="rrb3942"
   ["Saúl Ibarra Corretgé"]="saghul"
-  ["Stéphane Alnet"]="shimaore"
   ["Stefan Pologov"]="sisoftrg"
+  ["Stéphane Alnet"]="shimaore"
+  ["Victor Ciurel <victor.ciurel@gmail.com>"]="victor-ciurel"
   ["Vlad Paiu"]="vladpaiu"
   ["Vlad Patrascu"]="rvlad-patrascu"
   ["Walter Doekes"]="wdoekes"
@@ -283,6 +293,7 @@ fix_authors=(
 
   # db_postgres
   ["9e6730ec4d2e876f6b2372f1b5fb5703112079fc"]="Ruslan Bukin"
+  ["2d80fcf1cfed82680a016fe723da03a303f73aff"]="Norman Brandinger"
 
   # db_text
   ["e8c8262d23b26bdb45b8074c6e518825ea0ca6de"]="Henning Westerholt"
@@ -439,6 +450,9 @@ fix_authors=(
   # presence_xml
   ["09717cf71cb28e9cb7b7747b170c45bb49d540df"]="Kennard White"
 
+  # proto_smpp
+  ["09b42266130943905938566752bf2e7855c13355"]="Victor Ciurel <victor.ciurel@gmail.com>"
+
   # pua
   ["2fb5fb43c22513ca50f2d84135339c7f7dd6b7a8"]="Alex Hermann"
   ["1639775961bdedec0a89269330324297f675d54a"]="Denis Bilenko <denis@ag-projects.com>"
@@ -576,6 +590,9 @@ mod_renames=(
   [auth_aaa]=auth_radius
   [cachedb_local]=localcache
   [uac_registrant]=registrant
+  [tracer]=siptrace
+  [mi_http]=mi_json:1540473075:  # old_module:new_module_since:old_module_until
+  [mi_html]=mi_http::1540473075
 )
 
 mk_git_handle() {
@@ -638,7 +655,7 @@ rebuild_proj_commit_stats() {
 }
 
 count_dir_changes() {
-  for sha in $(git log --reverse --format=%H modules/$1); do
+  for sha in $(git log --reverse --format=%H $2 modules/$1); do
     [ -n "${skip_commits[$sha]}" ] && continue
 
     show="$(git log $sha -b --no-walk --find-renames --format="$(echo -e "%an <%ae>")" --numstat | grep -vE "modules/.*(README|contributors\.xml|\.html|\.sw[po])")"
@@ -670,15 +687,34 @@ count_dir_changes() {
   done
 }
 
-count_module_changes() {
-  [ -n "${mod_renames[$1]}" ] && count_module_changes "${mod_renames[$1]}" "rec"
+_count_module_changes() {
+  if [ -n "${mod_renames[$1]}" ]; then
+    IFS=':'; local arr=(${mod_renames[$1]})
+    local old_mod="${arr[0]}"; local since="${arr[1]}"; local until="${arr[2]}"
+    unset IFS
 
-  mkdir -p modules/$1
-  count_dir_changes "$1"
-  if [ "$2" == "rec" ]; then
+    # this trick helps deal with the mi_html->mi_http, mi_http->mi_json rename
+    [ -z "$3" -o -z "$since" ] && \
+        _count_module_changes "$old_mod" "$2" "recurse" "$until"
+  fi
+
+  if [ -n "$4" ]; then
+    time_cond="--until $4"
+  elif [ -z "$3" -a -n "$since" ]; then
+    time_cond="--since $since"
+  else
+    time_cond=
+  fi
+
+  mkdir -p modules/$1$2
+  count_dir_changes "$1$2" "$time_cond"
+  if [ "$3" == "recurse" -a -z "$time_cond" ]; then
     rm -r modules/$1
   fi
 }
+
+count_module_changes() { _count_module_changes "$1" ""; }
+count_module_doc_changes() { _count_module_changes "$1" "/doc"; }
 
 # $1 - module name, e.g.: "tm", "cachedb_mongodb"
 gen_module_contributors() {
@@ -867,7 +903,7 @@ unset last_commit
 declare -A first_commit
 declare -A last_commit
 
-count_module_changes $1/doc
+count_module_doc_changes $1
 
 (
   export LC_ALL=C

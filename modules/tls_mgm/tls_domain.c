@@ -205,7 +205,7 @@ int set_all_domain_attr(struct tls_domain **dom, char **str_vals, int *int_vals,
 
 	d = shm_realloc(d, len);
 	if (d == NULL) {
-		LM_ERR("insufficient shm memory");
+		LM_ERR("insufficient shm memory\n");
 		d = *dom;
 		*dom = (*dom)->next;
 		shm_free(d);
@@ -527,7 +527,7 @@ static int add_match_filt_to_dom(str *filter_s, struct str_list **filter_list)
 		LM_ERR("No more shm mem\n");
 		return -1;
 	}
-	if (shm_str_dup(&match_filt->s, filter_s) < 0) {
+	if (shm_nt_str_dup(&match_filt->s, filter_s) < 0) {
 		shm_free(match_filt);
 		return -1;
 	}
@@ -544,7 +544,7 @@ int parse_match_domains(struct tls_domain *tls_dom, str *domains_s)
 	str match_any_s = str_init("*");
 
 	if (domains_s->s) {
-		list = _parse_csv_record(domains_s, CSV_SIMPLE);
+		list = parse_csv_record(domains_s);
 		if (!list) {
 			LM_ERR("Failed to parse CSV record\n");
 			return -1;
@@ -574,13 +574,13 @@ static int parse_domain_address(char *val, unsigned int len, struct ip_addr **ip
 
 	/* get the IP */
 	s.s = p;
-	if ((p = q_memchr(p, ':', len)) == NULL) {
+	if ((p = q_memrchr(p, ':', len)) == NULL) {
 		LM_ERR("TLS domain address has to be in [IP:port] format\n");
 		goto parse_err;
 	}
 	s.len = p - s.s;
 	p++;
-	if ((*ip = str2ip(&s)) == NULL) {
+	if ((*ip = str2ip(&s)) == NULL && (*ip = str2ip6(&s)) == NULL) {
 		LM_ERR("[%.*s] is not an ip\n", s.len, s.s);
 		goto parse_err;
 	}
@@ -608,11 +608,14 @@ int parse_match_addresses(struct tls_domain *tls_dom, str *addresses_s)
 	unsigned int port;
 
 	if (addresses_s->s) {
-		if (addresses_s->s[0] == MATCH_ANY_VAL)
+		if (addresses_s->s[0] == MATCH_ANY_VAL) {
 			if (add_match_filt_to_dom(&match_any_s, &tls_dom->match_addresses) < 0)
 				return -1;
 
-		list = _parse_csv_record(addresses_s, CSV_SIMPLE);
+			return 0;
+		}
+
+		list = parse_csv_record(addresses_s);
 		if (!list) {
 			LM_ERR("Failed to parse CSV record\n");
 			return -1;

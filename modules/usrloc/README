@@ -20,7 +20,7 @@ usrloc Module
 
         1.5. Exported Parameters
 
-              1.5.1. nat_bflag (string/integer)
+              1.5.1. nat_bflag (string)
               1.5.2. contact_id_column (string)
               1.5.3. user_column (string)
               1.5.4. domain_column (string)
@@ -58,7 +58,7 @@ usrloc Module
               1.5.36. regen_broken_contactid (integer)
               1.5.37. latency_event_min_us (integer)
               1.5.38. latency_event_min_us_delta (integer)
-              1.5.39. shared_pinging (integer)
+              1.5.39. pinging_mode (string)
               1.5.40. mi_dump_kv_store (integer)
 
         1.6. Exported Functions
@@ -135,6 +135,9 @@ usrloc Module
 
    List of Tables
 
+   1.1. Possible values for the "pinging_mode", depending on the
+          current "cluster_mode"
+
    3.1. Top contributors by DevScore^(1), authored commits^(2) and
           lines added/removed^(3)
 
@@ -180,7 +183,7 @@ usrloc Module
    1.36. Set regen_broken_contactid parameter
    1.37. Set latency_event_min_us parameter
    1.38. Set latency_event_min_us_delta parameter
-   1.39. Set shared_pinging parameter
+   1.39. Set pinging_mode parameter
    1.40. Set mi_dump_kv_store parameter
 
 Chapter 1. Admin Guide
@@ -229,10 +232,10 @@ Chapter 1. Admin Guide
    order to share the reachability of these contacts with the
    global OpenSIPS user location cluster, registrar nodes will
    only publish some light "metadata" entries for any new
-   Addresses-of-Record which are reachable from it. These entries
-   will cause other nodes to also fork additional SIP branches
-   pointing to the above-mentioned registrar upon receiving a call
-   for the above-mentioned Addresses-of-Record.
+   Addresses-of-Record which are reachable from them. These
+   entries will cause other nodes to also fork additional SIP
+   branches pointing to the above-mentioned registrar upon
+   receiving a call for the above-mentioned Addresses-of-Record.
 
    The federation topology is an optimized solution for the
    following core problems:
@@ -257,8 +260,6 @@ Chapter 1. Admin Guide
    databases which support key/multi-value column-like
    associations. Example known backends to support these
    abstractions at the time of writing are MongoDB and Cassandra.
-   Of these two, only the MongoDB OpenSIPS driver has been so far
-   extended to implement the required NoSQL API endpoints.
 
    The federated user location tutorial contains precise details
    on how to achieve this setup (including High Availability
@@ -266,17 +267,17 @@ Chapter 1. Admin Guide
 
 1.2.2. "Full Sharing" Topology
 
-   A fully sharing user location propagates (broadcasts) contact
-   information to all data nodes (OpenSIPS or NoSQL). The main
-   assumption behind this mode is that any routing restrictions
-   have been alleviated beforehand. Consequently, either SIP
-   traffic egressing from a "full sharing" OpenSIPS user location
-   topology is being intermediated by an additional SIP edge
-   endpoint of our platform, or there are no egress IP
-   restrictions at all (for example, if all SIP UAs have public
-   IPs). In this setup, all OpenSIPS user location nodes are
-   equivalent to one another, as they each have access to the same
-   dataset and have no routing restrictions.
+   A fully sharing user location broadcasts contact information to
+   all data nodes (OpenSIPS or NoSQL). The main assumption behind
+   this mode is that any routing restrictions have been alleviated
+   beforehand. Consequently, either SIP traffic egressing from a
+   "full sharing" OpenSIPS user location topology is being
+   intermediated by an additional SIP edge endpoint of our
+   platform, or there are no egress IP restrictions at all (for
+   example, if all SIP UAs have public IPs). In this setup, all
+   OpenSIPS user location nodes are equivalent to one another, as
+   they each have access to the same dataset and have no routing
+   restrictions.
 
    The full sharing topology is an appropriate solution for
    multi-layer VoIP platforms, where the OpenSIPS registrar nodes
@@ -291,12 +292,10 @@ Chapter 1. Admin Guide
    active-passive registrar nodes configuration, both of which
    make use of a shared virtual IP.
 
-   Currently, registrations may optionally be fully managed inside
-   NoSQL databases which support key/multi-value column-like
-   associations. Example known backends to support these
-   abstractions at the time of writing are MongoDB and Cassandra.
-   Of these two, only the MongoDB OpenSIPS driver has been so far
-   extended to implement the required NoSQL API endpoints.
+   Registrations may optionally be fully managed inside NoSQL
+   databases which support key/multi-value column-like
+   associations. Example known backends to currently support these
+   abstractions are MongoDB and Apache Cassandra.
 
    The "full sharing" user location tutorial contains precise
    details on how to achieve this setup (including full NoSQL
@@ -311,16 +310,17 @@ Chapter 1. Admin Guide
    aware of each other, they will each scan the entire contact
    dataset, thus periodically sending "N pings" instead of "1
    ping" for each contact. This difference directly affects
-   service scalability, as well as the amount of consumed cloud
-   compute resources such as CPU and network bandwidth, both on
-   the service and client side.
+   service scalability, as well as the amount of consumed
+   resources such as CPU and network bandwidth, both on the
+   service and client side.
 
    This problem is solved with the help of the OpenSIPS cluster
    layer, which makes all nodes aware of each others' presence.
    Thus, the distributed user location node topologies are able to
    collectively partition the pinging workload and spread it
    evenly across the current number of cluster nodes, at any given
-   point in time.
+   point in time. The pinging_mode module parameter describes the
+   built-in pinging heuristics in more detail.
 
 1.3. Contact matching
 
@@ -369,15 +369,14 @@ Chapter 1. Admin Guide
 
 1.5. Exported Parameters
 
-1.5.1. nat_bflag (string/integer)
+1.5.1. nat_bflag (string)
 
    The name of the branch flag to be used as NAT marker (if the
    contact is or not natted). This is a branch flag and it will be
-   imported and used by all other modules depending of usrloc
+   imported and used by all other modules depending on the usrloc
    module.
 
-   WARNING: Setting INT flags is deprecated! Use quoted strings
-   instead! Default value is “NULL” (not set).
+   Default value is NULL (not set).
 
    Example 1.1. Set nat_bflag parameter
 ...
@@ -698,9 +697,10 @@ modparam("usrloc", "db_mode", 2)
        all modified or new contacts to database. Use this scheme
        if you encounter high-load peaks and want them to process
        as fast as possible. The mode will not help at all if the
-       load is high all the time. Also, latency of this mode is
-       much lower than latency of mode 1, but slightly higher than
-       latency of mode 0.
+       load is high all the time. The added latency on the SIP
+       signaling when using this asynchronous preset is much lower
+       than the one added by the safe but blocking,
+       "single-instance-sql-write-through" preset.
      * "sql-only" - DB-Only scheme. No memory cache is kept, all
        operations being directly performed with the database. The
        timer deletes all expired contacts from database - cleans
@@ -740,7 +740,7 @@ modparam("usrloc", "working_mode_preset", "full-sharing-cachedb-cluster"
 1.5.27. cluster_mode (string)
 
    This parameter will get overridden if either
-   working_mode_preset or db_mode are set.
+   working_mode_preset or db_mode is set.
 
    The behavior of the global OpenSIPS user location cluster.
    Refer to section Distributed SIP User Location for details.
@@ -998,23 +998,43 @@ modparam("usrloc", "latency_event_min_us", 425000)
 modparam("usrloc", "latency_event_min_us_delta", 300000)
 ...
 
-1.5.39. shared_pinging (integer)
+1.5.39. pinging_mode (string)
 
-   Only relevant in a "full sharing" or "full sharing cachedb"
-   cluster_mode. If set to non-zero, the overall pinging workload
-   will be equally spread across cluster nodes with the help of
-   the clustering layer that keeps track of the current number of
-   active nodes.
+   Depending on the cluster_mode, the module can perform contact
+   pinging using one of at most two possible heuristics:
+     * "ownership" - this instance will only attempt to ping a
+       contact if it decides it is the logical owner of the
+       contact. If a shared tag is attached to a contact, a node
+       will keep sending pings to that contact as long as it owns
+       the respective tag. If no shared tag has been specified for
+       a given contact, the default is to assume permanent
+       ownership of the contact and always ping it.
+     * "cooperation" - the assumption behind this pinging
+       heuristic is that all user location cluster nodes are
+       symmetrical (possibly front-ended by a SIP traffic
+       balancing entity), such that either of them can ping any
+       contact. Under this assumption, all currently online user
+       location cluster nodes will cooperate and evenly split the
+       pinging workload between them by hashing AoRs modulo
+       current_number_of_online_nodes, and only picking the ones
+       that they are responsible for.
 
-   Disabling this parameter may be useful in simple active/backup
-   setups, where only the active node must perform the pinging.
+   Table 1.1. Possible values for the "pinging_mode", depending on
+   the current "cluster_mode"
+   cluster_mode none federation-cachedb full-sharing
+   full-sharing-cachedb sql-only
+   pinging_mode ownership ownership cooperation / ownership
+   cooperation unmaintained
 
-   Default value is “1 (enabled)”.
+   Notice that only the "full-sharing" clustering mode allows some
+   flexibility -- all other modes are logically tied to a single
+   pinging logic. Any unaccepted value, according to the above
+   table, set for those modes will be silently discarded.
 
-   Example 1.39. Set shared_pinging parameter
+   Example 1.39. Set pinging_mode parameter
 ...
-# do not partition the pinging workload across cluster nodes
-modparam("usrloc", "shared_pinging", 0)
+# prepare an active/backup "full-sharing" setup, with no front-end
+modparam("usrloc", "pinging_mode", "ownership")
 ...
 
 1.5.40. mi_dump_kv_store (integer)
@@ -1044,9 +1064,9 @@ modparam("usrloc", "mi_dump_kv_store", 1)
    Deletes an entire AOR record (including its contacts).
 
    Parameters:
-     * table name - table where the AOR is removed from (Ex:
+     * table_name - table where the AOR is removed from (Ex:
        location).
-     * AOR - user AOR in username[@domain] format (domain must be
+     * aor - user AOR in username[@domain] format (domain must be
        supplied only if use_domain option is on).
 
 1.7.2.  ul_rm_contact
@@ -1080,11 +1100,11 @@ modparam("usrloc", "mi_dump_kv_store", 1)
    Parameters:
      * table name - table where the contact will be added (Ex:
        location).
-     * AOR - user AOR in username[@domain] format (domain must be
+     * aor - user AOR in username[@domain] format (domain must be
        supplied only if use_domain option is on).
      * contact - contact string to be added
      * expires - expires value of the contact
-     * Q - Q value of the contact
+     * q - Q value of the contact
      * unused - unused attribute (kept for backword compatibility)
      * flags - internal USRLOC flags of the contact
      * cflags - per branch flags of the contact
@@ -1095,8 +1115,8 @@ modparam("usrloc", "mi_dump_kv_store", 1)
    Dumps the contacts of an user AOR.
 
    Parameters:
-     * table name - table where the AOR resides (Ex: location).
-     * AOR - user AOR in username[@domain] format (domain must be
+     * table_name - table where the AOR resides (Ex: location).
+     * aor - user AOR in username[@domain] format (domain must be
        supplied only if use_domain option is on).
 
 1.7.7.  ul_sync
@@ -1204,6 +1224,12 @@ modparam("usrloc", "mi_dump_kv_store", 1)
      * latency - The latency of the last successful ping for this
        contact. Until the first ping reply for a given contact
        arrives, its pinging latency will be 0.
+     * shtag - The shared tag of the contact, which helps
+       determine if the current node owns the contact (e.g.
+       possibly using the $cluster.sh_tag pseudo-variable in order
+       to perform the check).
+       NOTICE: If a contact has no shared tag attached to it, this
+       key will map to a "" (empty string) value!
 
 1.9.4.  E_UL_CONTACT_DELETE
 
@@ -1223,7 +1249,7 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 
 1.9.6.  E_UL_LATENCY_UPDATE
 
-   This event is raised when a contact pinging latency passes
+   This event is raised when a contact pinging latency matches
    either of the latency_event_min_us or
    latency_event_min_us_delta filters. If none of these filters is
    set, this event will get raised for each successful contact
@@ -1470,14 +1496,14 @@ Chapter 3. Contributors
    commits^(2) and lines added/removed^(3)
      Name DevScore Commits Lines ++ Lines --
    1. Jan Janak (@janakj) 421 117 15689 10095
-   2. Bogdan-Andrei Iancu (@bogdan-iancu) 230 135 3959 3493
-   3. Liviu Chircu (@liviuchircu) 197 118 5744 1827
+   2. Bogdan-Andrei Iancu (@bogdan-iancu) 234 139 3972 3499
+   3. Liviu Chircu (@liviuchircu) 228 144 6119 1990
    4. Ionut Ionita (@ionutrazvanionita) 41 24 1099 413
    5. Daniel-Constantin Mierla (@miconda) 40 29 544 308
-   6. Jiri Kuthan (@jiriatipteldotorg) 36 25 975 120
-   7. Vlad Patrascu (@rvlad-patrascu) 23 14 404 269
-   8. Henning Westerholt (@henningw) 22 11 462 356
-   9. Razvan Crainea (@razvancrainea) 20 15 330 70
+   6. Vlad Patrascu (@rvlad-patrascu) 40 21 770 633
+   7. Jiri Kuthan (@jiriatipteldotorg) 36 25 975 120
+   8. Razvan Crainea (@razvancrainea) 27 21 379 120
+   9. Henning Westerholt (@henningw) 22 11 462 356
    10. Andrei Pelinescu-Onciul 17 13 151 91
 
    All remaining contributors: Vlad Paiu (@vladpaiu), Nils
@@ -1486,10 +1512,12 @@ Chapter 3. Contributors
    (@sobomax), Andrei Dragus, Dusan Klinec, Andrei Datcu
    (@andrei-datcu), Juha Heinanen (@juha-h), Anca Vamanu, Marcus
    Hunger, Jamey Hicks, Andreas Granig, Shlomi Gutman, @jalung,
-   Jeffrey Magder, Phil D'Amore, Norman Brandinger (@NormB), David
-   Sanders, Konstantin Bokarius, Klaus Darilion, Iouri Kharon,
-   Matthew M. Boedicker, Peter Lemenkov (@lemenkov), UnixDev,
-   Edson Gellert Schubert, Elena-Ramona Modroiu, Stephane Alnet.
+   Jeffrey Magder, Phil D'Amore, Alessio Garzi, Norman Brandinger
+   (@NormB), David Sanders, Konstantin Bokarius, Walter Doekes
+   (@wdoekes), Klaus Darilion, Iouri Kharon, Dan Pascu
+   (@danpascu), Matthew M. Boedicker, Peter Lemenkov (@lemenkov),
+   UnixDev, Edson Gellert Schubert, Alessio Garzi, Elena-Ramona
+   Modroiu, Stephane Alnet.
 
    (1) DevScore = author_commits + author_lines_added /
    (project_lines_added / project_commits) + author_lines_deleted
@@ -1511,28 +1539,30 @@ Chapter 3. Contributors
 
    Table 3.2. Most recently active contributors^(1) to this module
                       Name                   Commit Activity
-   1.  Bogdan-Andrei Iancu (@bogdan-iancu) Mar 2002 - Aug 2018
-   2.  Vlad Patrascu (@rvlad-patrascu)     Jul 2016 - Aug 2018
-   3.  Liviu Chircu (@liviuchircu)         Jan 2013 - Aug 2018
-   4.  Razvan Crainea (@razvancrainea)     Jul 2011 - Jul 2018
-   5.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
-   6.  Shlomi Gutman                       Mar 2018 - Mar 2018
-   7.  @jalung                             Aug 2017 - Aug 2017
-   8.  Vlad Paiu (@vladpaiu)               Jun 2011 - Jul 2017
-   9.  Ionut Ionita (@ionutrazvanionita)   Jul 2015 - Apr 2017
-   10. Ionel Cerghit (@ionel-cerghit)      Jul 2015 - Dec 2016
+   1.  Razvan Crainea (@razvancrainea)     Jul 2011 - Aug 2019
+   2.  Alessio Garzi                       Aug 2019 - Aug 2019
+   3.  Alessio Garzi                       Aug 2019 - Aug 2019
+   4.  Bogdan-Andrei Iancu (@bogdan-iancu) Mar 2002 - Aug 2019
+   5.  Liviu Chircu (@liviuchircu)         Jan 2013 - Jul 2019
+   6.  Vlad Patrascu (@rvlad-patrascu)     Jul 2016 - Jul 2019
+   7.  Dan Pascu (@danpascu)               May 2019 - May 2019
+   8.  Walter Doekes (@wdoekes)            Apr 2019 - Apr 2019
+   9.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
+   10. Shlomi Gutman                       Mar 2018 - Mar 2018
 
-   All remaining contributors: Ovidiu Sas (@ovidiusas), Dusan
-   Klinec, Eseanu Marius Cristian (@eseanucristian), David
-   Sanders, Andrei Datcu (@andrei-datcu), Stephane Alnet, Andrei
-   Dragus, Phil D'Amore, UnixDev, Daniel-Constantin Mierla
-   (@miconda), Henning Westerholt (@henningw), Iouri Kharon,
-   Konstantin Bokarius, Edson Gellert Schubert, Anca Vamanu,
-   Matthew M. Boedicker, Marcus Hunger, Elena-Ramona Modroiu,
-   Jeffrey Magder, Norman Brandinger (@NormB), Andreas Granig,
-   Juha Heinanen (@juha-h), Klaus Darilion, Jan Janak (@janakj),
-   Andrei Pelinescu-Onciul, Jiri Kuthan (@jiriatipteldotorg),
-   Maksym Sobolyev (@sobomax), Jamey Hicks, Nils Ohlmeier.
+   All remaining contributors: @jalung, Vlad Paiu (@vladpaiu),
+   Ionut Ionita (@ionutrazvanionita), Ionel Cerghit
+   (@ionel-cerghit), Ovidiu Sas (@ovidiusas), Dusan Klinec, Eseanu
+   Marius Cristian (@eseanucristian), David Sanders, Andrei Datcu
+   (@andrei-datcu), Stephane Alnet, Andrei Dragus, Phil D'Amore,
+   UnixDev, Daniel-Constantin Mierla (@miconda), Henning
+   Westerholt (@henningw), Iouri Kharon, Konstantin Bokarius,
+   Edson Gellert Schubert, Anca Vamanu, Matthew M. Boedicker,
+   Marcus Hunger, Elena-Ramona Modroiu, Jeffrey Magder, Norman
+   Brandinger (@NormB), Andreas Granig, Juha Heinanen (@juha-h),
+   Klaus Darilion, Jan Janak (@janakj), Andrei Pelinescu-Onciul,
+   Jiri Kuthan (@jiriatipteldotorg), Maksym Sobolyev (@sobomax),
+   Jamey Hicks, Nils Ohlmeier.
 
    (1) including any documentation-related commits, excluding
    merge commits
@@ -1541,15 +1571,16 @@ Chapter 4. Documentation
 
 4.1. Contributors
 
-   Last edited by: Vlad Patrascu (@rvlad-patrascu), Liviu Chircu
-   (@liviuchircu), Peter Lemenkov (@lemenkov), Bogdan-Andrei Iancu
-   (@bogdan-iancu), Razvan Crainea (@razvancrainea), Ionut Ionita
-   (@ionutrazvanionita), Eseanu Marius Cristian (@eseanucristian),
-   Ovidiu Sas (@ovidiusas), Andrei Datcu (@andrei-datcu),
-   Daniel-Constantin Mierla (@miconda), Konstantin Bokarius, Edson
-   Gellert Schubert, Henning Westerholt (@henningw), Marcus
-   Hunger, Elena-Ramona Modroiu, Juha Heinanen (@juha-h), Jan
-   Janak (@janakj), Maksym Sobolyev (@sobomax), Nils Ohlmeier.
+   Last edited by: Liviu Chircu (@liviuchircu), Vlad Patrascu
+   (@rvlad-patrascu), Peter Lemenkov (@lemenkov), Bogdan-Andrei
+   Iancu (@bogdan-iancu), Razvan Crainea (@razvancrainea), Ionut
+   Ionita (@ionutrazvanionita), Eseanu Marius Cristian
+   (@eseanucristian), Ovidiu Sas (@ovidiusas), Andrei Datcu
+   (@andrei-datcu), Daniel-Constantin Mierla (@miconda),
+   Konstantin Bokarius, Edson Gellert Schubert, Henning Westerholt
+   (@henningw), Marcus Hunger, Elena-Ramona Modroiu, Juha Heinanen
+   (@juha-h), Jan Janak (@janakj), Maksym Sobolyev (@sobomax),
+   Nils Ohlmeier.
 
    Documentation Copyrights:
 

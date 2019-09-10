@@ -101,6 +101,9 @@ static int tls_crlf_pingpong = 1;
 /* 0: do not drop single CRLF messages */
 static int tls_crlf_drop = 0;
 
+/* check the SSL certificate when comes to TCP conn reusage */
+static int cert_check_on_conn_reusage = 0;
+
 static int  mod_init(void);
 static void mod_destroy(void);
 static int proto_tls_init(struct proto_info *pi);
@@ -109,7 +112,10 @@ static int proto_tls_send(struct socket_info* send_sock,
 		char* buf, unsigned int len, union sockaddr_union* to, int id);
 static void tls_report(int type, unsigned long long conn_id, int conn_flags,
 		void *extra);
-static struct mi_root* tls_trace_mi(struct mi_root* cmd, void* param );
+static mi_response_t *tls_trace_mi(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+static mi_response_t *tls_trace_mi_1(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
 
 trace_dest t_dst;
@@ -152,8 +158,8 @@ static int proto_tls_conn_init(struct tcp_connection* c);
 static void proto_tls_conn_clean(struct tcp_connection* c);
 
 static cmd_export_t cmds[] = {
-	{"proto_init", (cmd_function)proto_tls_init, 0, 0, 0, 0},
-	{0,0,0,0,0,0}
+	{"proto_init", (cmd_function)proto_tls_init, {{0, 0, 0}}, 0},
+	{ 0, 0, {{0, 0, 0}}, 0}
 };
 
 
@@ -163,8 +169,9 @@ static param_export_t params[] = {
 	{ "tls_crlf_drop",         INT_PARAM,         &tls_crlf_drop             },
 	{ "tls_max_msg_chunks",    INT_PARAM,         &tls_max_msg_chunks        },
 	{ "trace_destination",     STR_PARAM,         &trace_destination_name.s  },
-	{ "trace_on",						 INT_PARAM, &trace_is_on_tmp        },
-	{ "trace_filter_route",				 STR_PARAM, &trace_filter_route     },
+	{ "trace_on",					INT_PARAM, &trace_is_on_tmp           },
+	{ "trace_filter_route",			STR_PARAM, &trace_filter_route        },
+	{ "cert_check_on_conn_reusage",	INT_PARAM, &cert_check_on_conn_reusage},
 	{0, 0, 0}
 };
 
@@ -180,8 +187,13 @@ static dep_export_t deps = {
 };
 
 static mi_export_t mi_cmds[] = {
-	{ "tls_trace", 0, tls_trace_mi,   0,  0,  0 },
-	{ 0, 0, 0, 0, 0, 0}
+	{ "tls_trace", 0, 0, 0, {
+		{tls_trace_mi, {0}},
+		{tls_trace_mi_1, {"trace_mode", 0}},
+		{EMPTY_MI_RECIPE}
+		}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 struct module_exports exports = {
@@ -189,7 +201,9 @@ struct module_exports exports = {
 	MOD_TYPE_DEFAULT,    /* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
-	&deps,            /* OpenSIPS module dependencies */
+	0,				 /* load function */
+	&deps,           /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	params,     /* module parameters */
@@ -202,6 +216,7 @@ struct module_exports exports = {
 	0,          /* response function */
 	mod_destroy,/* destroy function */
 	0,          /* per-child init function */
+	0           /* reload confirm function */
 };
 
 
@@ -243,7 +258,8 @@ static int mod_init(void)
 	*trace_is_on = trace_is_on_tmp;
 	if ( trace_filter_route ) {
 		trace_filter_route_id =
-			get_script_route_ID_by_name( trace_filter_route, rlist, RT_NO);
+			get_script_route_ID_by_name( trace_filter_route,
+				sroutes->request, RT_NO);
 	}
 
 	return 0;
@@ -278,6 +294,10 @@ static int proto_tls_init(struct proto_info *pi)
 	pi->net.read			= (proto_net_read_f)tls_read_req;
 	pi->net.conn_init		= proto_tls_conn_init;
 	pi->net.conn_clean		= proto_tls_conn_clean;
+	if (cert_check_on_conn_reusage)
+		pi->net.conn_match		= tls_conn_extra_match;
+	else
+		pi->net.conn_match		= NULL;
 	pi->net.report			= tls_report;
 
 	return 0;
@@ -420,6 +440,7 @@ static int proto_tls_send(struct socket_info* send_sock,
 				char* buf, unsigned int len, union sockaddr_union* to, int id)
 {
 	struct tcp_connection *c;
+	struct tls_domain *dom;
 	struct ip_addr ip;
 	int port;
 	int fd, n;
@@ -427,9 +448,13 @@ static int proto_tls_send(struct socket_info* send_sock,
 	if (to){
 		su2ip_addr(&ip, to);
 		port=su_getport(to);
-		n = tcp_conn_get(id, &ip, port, PROTO_TLS, &c, &fd);
+		dom = (cert_check_on_conn_reusage==0)?
+			NULL : tls_mgm_api.find_client_domain( &ip, port);
+		n = tcp_conn_get(id, &ip, port, PROTO_TLS, dom?dom->ctx:NULL, &c, &fd);
+		if (dom)
+			tls_mgm_api.release_domain(dom);
 	}else if (id){
-		n = tcp_conn_get(id, 0, 0, PROTO_NONE, &c, &fd);
+		n = tcp_conn_get(id, 0, 0, PROTO_NONE, NULL, &c, &fd);
 	}else{
 		LM_CRIT("prot_tls_send called with null id & to\n");
 		return -1;
@@ -490,6 +515,8 @@ send_it:
 
 	/* mark the ID of the used connection (tracing purposes) */
 	last_outgoing_tcp_id = c->id;
+	send_sock->last_local_real_port = c->rcv.dst_port;
+	send_sock->last_remote_real_port = c->rcv.src_port;
 
 	tcp_conn_release(c, 0);
 	return n;
@@ -608,45 +635,51 @@ error:
 	return -1;
 }
 
-static struct mi_root* tls_trace_mi(struct mi_root* cmd_tree, void* param )
+static mi_response_t *tls_trace_mi(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_node* node;
+	mi_response_t *resp;
+	mi_item_t *resp_obj;
 
-	struct mi_node *rpl;
-	struct mi_root *rpl_tree ;
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
+		return 0;
 
-	node = cmd_tree->node.kids;
-	if(node == NULL) {
-		/* display status on or off */
-		rpl_tree = init_mi_tree( 200, MI_SSTR(MI_OK));
-		if (rpl_tree == 0)
+	if ( *trace_is_on ) {
+		if (add_mi_string(resp_obj, MI_SSTR("TLS tracing"), MI_SSTR("on")) < 0) {
+			free_mi_response(resp);
 			return 0;
-		rpl = &rpl_tree->node;
-
-		if ( *trace_is_on ) {
-			node = add_mi_node_child(rpl,0,MI_SSTR("TLS tracing"),MI_SSTR("on"));
-		} else {
-			node = add_mi_node_child(rpl,0,MI_SSTR("TLS tracing"),MI_SSTR("off"));
-		}
-
-		return rpl_tree ;
-	} else if ( node && !node->next ) {
-		if ( (node->value.s[0] | 0x20) == 'o' &&
-				(node->value.s[1] | 0x20) == 'n' ) {
-			*trace_is_on = 1;
-			return init_mi_tree( 200, MI_SSTR(MI_OK));
-		} else
-		if ( (node->value.s[0] | 0x20) == 'o' &&
-				(node->value.s[1] | 0x20) == 'f' &&
-				(node->value.s[2] | 0x20) == 'f' ) {
-			*trace_is_on = 0;
-			return init_mi_tree( 200, MI_SSTR(MI_OK));
-		} else {
-			return init_mi_tree( 500, MI_SSTR(MI_INTERNAL_ERR));
 		}
 	} else {
-		return init_mi_tree( 500, MI_SSTR(MI_INTERNAL_ERR));
+		if (add_mi_string(resp_obj, MI_SSTR("TLS tracing"), MI_SSTR("off")) < 0) {
+			free_mi_response(resp);
+			return 0;
+		}
 	}
 
-	return NULL;
+	return resp;
+}
+
+static mi_response_t *tls_trace_mi_1(const mi_params_t *params,
+								struct mi_handler *async_hdl)
+{
+	str new_mode;
+
+	if (get_mi_string_param(params, "trace_mode", &new_mode.s, &new_mode.len) < 0)
+		return init_mi_param_error();
+
+	if ( (new_mode.s[0] | 0x20) == 'o' &&
+			(new_mode.s[1] | 0x20) == 'n' ) {
+		*trace_is_on = 1;
+		return init_mi_result_ok();
+	} else
+	if ( (new_mode.s[0] | 0x20) == 'o' &&
+			(new_mode.s[1] | 0x20) == 'f' &&
+			(new_mode.s[2] | 0x20) == 'f' ) {
+		*trace_is_on = 0;
+		return init_mi_result_ok();
+	} else {
+		return init_mi_error_extra(500, MI_SSTR("Bad parameter value"),
+			MI_SSTR("trace_mode should be 'on' or 'off'"));
+	}
 }

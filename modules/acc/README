@@ -64,7 +64,7 @@ Acc Module
 
         1.8. Exported Functions
 
-              1.8.1. do_accounting(type, flags, table)
+              1.8.1. do_accounting(type, [flags], [table])
               1.8.2. drop_accounting([type], [flags])
               1.8.3. acc_log_request(comment)
               1.8.4. acc_db_request(comment, table)
@@ -182,6 +182,11 @@ Chapter 1. Admin Guide
    The SQL, Event Interface and AAA backend support are compiled
    in the module.
 
+   A very comprehensive description of how the accounting module
+   works in terms accounting scope, accounting events and
+   accounting backends can be found in this online Advanced
+   Accounting Tutorial.
+
 1.1.1. General Example
 
 loadmodule "modules/acc/acc.so"
@@ -194,7 +199,7 @@ if ($ru=~"sip:+40") /* calls to Romania */ {
         exit;
     }
 
-    if (is_method("INVITE") && !db_check_from()) {
+    if (is_method("INVITE") && $au!=$fU) {
         xlog("FROM URI != digest username\n");
         sl_send_reply("403","Forbidden");
     }
@@ -620,19 +625,31 @@ modparam("acc", "acc_created_avp_name", "call_created_avp")
 1.7.1. $acc_extra(tag_name)
 
    This variable can addresed with the tag names defined using
-   extra_fields parameter. If do_accounting() isn't called, this
-   variable is visible during the whole processing of one message,
-   enabling calling acc_XXX_request(). If do_accounting() is
-   called, the variable will be visible from the first call of
-   this function until the actual accounting is being made.
+   extra_fields. If do_accounting() isn't called, this variable is
+   visible during the whole processing of one message, enabling
+   calling acc_XXX_request(). If do_accounting() is called, the
+   variable will be visible from the first call of this function
+   until the actual accounting is being made.
 
 1.7.2. $(acc_leg(tag_name)[leg_index])
 
    This variable can be addressed with the tag names defined using
-   leg_fields parameter and a valid leg index( <=
-   acc_current_leg). This variable can't be used unless
-   do_accounting() function is used. The variable also accepts
-   negative indexes, which start from -1(value for the last leg).
+   leg_fields and a valid leg index (<= $acc_current_leg). This
+   variable cannot be used unless do_accounting() is used. The
+   variable also accepts negative indexes, which start from -1
+   (the lastly added leg).
+
+# the "caller" value of the current leg
+$acc_leg(caller)
+
+# the "caller" value of the lastly added leg
+$(acc_leg(caller)[-1]) # equivalent to $acc_leg(caller)
+                       # equivalent to $(acc_leg(caller)[$acc_current_le
+g])
+
+# the "caller" value of the next-to-last leg
+$(acc_leg(caller)[-2])
+
 
 1.7.3. $acc_current_leg (read-only)
 
@@ -641,7 +658,7 @@ modparam("acc", "acc_created_avp_name", "call_created_avp")
 
 1.8. Exported Functions
 
-1.8.1.  do_accounting(type, flags, table)
+1.8.1.  do_accounting(type, [flags], [table])
 
    do_accounting() replaces all the *_flag and, *_missed_flag,
    cdr_flag, failed transaction_flag and the db_table_avp
@@ -650,16 +667,16 @@ modparam("acc", "acc_created_avp_name", "call_created_avp")
    the work for you.
 
    Meaning of the parameters is as follows:
-     * type - the type of accounting you want to do. All types
-       have to be separated by '|'. The following parameters can
-       be used:
+     * type (string) - the type of accounting you want to do. All
+       types have to be separated by '|'. The following parameters
+       can be used:
           + log - syslog accounting;
           + db - database accounting;
           + aaa - aaa specific accounting;
           + evi - Event Interface accounting;
-     * flags - flags for the accounting type you have selected.
-       All the types have to be separated by '|'. The following
-       parameters can be used:
+     * flags (string, optional) - flags for the accounting type
+       you have selected. All the types have to be separated by
+       '|'. The following parameters can be used:
           + cdr - enables dialog-level accounting. OpenSIPS will
             internally detect dialog termination
             (generation/receipt of a BYE request), and store the
@@ -675,8 +692,8 @@ modparam("acc", "acc_created_avp_name", "call_created_avp")
           + failed - flag which indicates if the transaction
             should also be accounted in case of failure
             (status>=300);
-     * table - table where to do the accounting; it replaces old
-       table_avp parameter;
+     * table (string, optional) - table where to do the
+       accounting; it replaces old table_avp parameter;
 
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    BRANCH_ROUTE and LOCAL_ROUTE.
@@ -709,16 +726,16 @@ y_acc");
    arguments normal accounting will still be enabled.
 
    Meaning of the parameters is as follows:
-     * type - the type of accounting you want to stop. All the
-       types have to be separated by '|'. The following parameters
-       can be used:
+     * type (string, optional) - the type of accounting you want
+       to stop. All the types have to be separated by '|'. The
+       following parameters can be used:
           + log - stop syslog accounting;
           + db - stop database accounting;
           + aaa - stop aaa specific accounting;
           + evi - stop Event Interface accounting;
-     * flags - flags to be reset for the accouting type you have
-       selected. All the types have to be separated by '|'. The
-       following parameters can be used:
+     * flags (string, optional) - flags to be reset for the
+       accouting type you have selected. All the types have to be
+       separated by '|'. The following parameters can be used:
           + cdr - stop CDR accounting;
           + missed - stop logging missed calls;
           + failed - stop failed transaction accounting;
@@ -747,7 +764,7 @@ y_acc");
                         /* or stop missed calls and cdr accounting for s
 yslog;
                          * normal accounting will still be enabled */
-                        drop_accounting("log","missed|cdr");
+                        drop_accounting("log", "missed|cdr");
                         /* or stop all types of accounting  */
                         drop_accounting();
                 }
@@ -762,10 +779,10 @@ yslog;
    processing.
 
    Meaning of the parameters is as follows:
-     * comment - Comment describing how the request completed -
-       this string has to contain a reply code followed by a reply
-       reason phrase (ex: "404 Nobody home"). Variables are
-       accepted in this string.
+     * comment (string) - Comment describing how the request
+       completed - this string has to contain a reply code
+       followed by a reply reason phrase (ex: "480 Nobody Home").
+       Variables are accepted in this string.
 
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    BRANCH_ROUTE and LOCAL_ROUTE.
@@ -782,11 +799,11 @@ acc_log_request("403 Destination not allowed");
    to in the second action parameter.
 
    Meaning of the parameters is as follows:
-     * comment - Comment describing how the request completed -
-       this string has to contain a reply code followed by a reply
-       reason phrase (ex: "404 Nobody home"). Variables are
-       accepted in this string.
-     * table - Database table to be used.
+     * comment (string) - Comment describing how the request
+       completed - this string has to contain a reply code
+       followed by a reply reason phrase (ex: "480 Nobody Home").
+       Variables are accepted in this string.
+     * table (string) - Database table to be used.
 
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    BRANCH_ROUTE and LOCAL_ROUTE.
@@ -794,7 +811,7 @@ acc_log_request("403 Destination not allowed");
    Example 1.24. acc_db_request usage
 ...
 acc_db_request("Some comment", "Some table");
-acc_db_request("$T_reply_code $(<reply>rr)","acc");
+acc_db_request("$T_reply_code $(<reply>rr)", "acc");
 ...
 
 1.8.5.  acc_aaa_request(comment)
@@ -803,10 +820,10 @@ acc_db_request("$T_reply_code $(<reply>rr)","acc");
    reports to aaa server as configured in “aaa_url”.
 
    Meaning of the parameters is as follows:
-     * comment - Comment describing how the request completed -
-       this string has to contain a reply code followed by a reply
-       reason phrase (ex: "404 Nobody home"). Variables are
-       accepted in this string.
+     * comment (string) - Comment describing how the request
+       completed - this string has to contain a reply code
+       followed by a reply reason phrase (ex: "404 Nobody home").
+       Variables are accepted in this string.
 
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    BRANCH_ROUTE and LOCAL_ROUTE.
@@ -825,10 +842,9 @@ acc_aaa_request("403 Destination not allowed");
    codes. More information on this in Exported Events.
 
    Meaning of the parameters is as follows:
-     * comment - Comment describing how the request completed -
-       this string has to contain a reply code followed by a reply
-       reason phrase (ex: "404 Nobody home"). Variables are
-       accepted in this string.
+     * comment (string) - Comment describing how the request
+       completed - this string has to contain a reply code
+       followed by a reply reason phrase (ex: "404 Nobody home")
 
    This function can be used from REQUEST_ROUTE, FAILURE_ROUTE,
    BRANCH_ROUTE and LOCAL_ROUTE.
@@ -999,24 +1015,24 @@ Chapter 3. Contributors
    Table 3.1. Top contributors by DevScore^(1), authored
    commits^(2) and lines added/removed^(3)
      Name DevScore Commits Lines ++ Lines --
-   1. Bogdan-Andrei Iancu (@bogdan-iancu) 218 103 4144 4534
+   1. Bogdan-Andrei Iancu (@bogdan-iancu) 222 107 4154 4572
    2. Jan Janak (@janakj) 151 16 5587 5074
    3. Ionut Ionita (@ionutrazvanionita) 144 39 3730 4180
-   4. Razvan Crainea (@razvancrainea) 77 49 2471 447
+   4. Razvan Crainea (@razvancrainea) 88 57 2618 542
    5. Jiri Kuthan (@jiriatipteldotorg) 56 26 2272 660
-   6. Liviu Chircu (@liviuchircu) 36 27 358 313
+   6. Liviu Chircu (@liviuchircu) 55 40 540 521
    7. Daniel-Constantin Mierla (@miconda) 26 23 115 88
    8. Elena-Ramona Modroiu 23 4 2267 5
    9. Henning Westerholt (@henningw) 20 15 184 131
    10. Vlad Paiu (@vladpaiu) 17 11 129 208
 
-   All remaining contributors: Irina-Maria Stanescu, Maksym
-   Sobolyev (@sobomax), Karel Kozlik, Andrei Pelinescu-Onciul,
-   Vlad Patrascu (@rvlad-patrascu), Juha Heinanen (@juha-h),
-   Elena-Ramona Modroiu, Dan Pascu (@danpascu), Ryan Bullock
-   (@rrb3942), Ovidiu Sas (@ovidiusas), Sergio Gutierrez, Peter
-   Nixon, Alex Massover, Nils Ohlmeier, Konstantin Bokarius, Jesus
-   Rodrigues, Julien Blache, Julián Moreno Patiño, Peter Lemenkov
+   All remaining contributors: Vlad Patrascu (@rvlad-patrascu),
+   Irina-Maria Stanescu, Maksym Sobolyev (@sobomax), Karel Kozlik,
+   Andrei Pelinescu-Onciul, Dan Pascu (@danpascu), Juha Heinanen
+   (@juha-h), Elena-Ramona Modroiu, Ryan Bullock (@rrb3942),
+   Ovidiu Sas (@ovidiusas), Sergio Gutierrez, Peter Nixon, Alex
+   Massover, Nils Ohlmeier, Konstantin Bokarius, Jesus Rodrigues,
+   Julien Blache, Julián Moreno Patiño, Peter Lemenkov
    (@lemenkov), Dusan Klinec, Edson Gellert Schubert.
 
    (1) DevScore = author_commits + author_lines_added /
@@ -1039,26 +1055,26 @@ Chapter 3. Contributors
 
    Table 3.2. Most recently active contributors^(1) to this module
                       Name                   Commit Activity
-   1.  Liviu Chircu (@liviuchircu)         Jan 2013 - Aug 2018
-   2.  Razvan Crainea (@razvancrainea)     Aug 2010 - Aug 2018
-   3.  Bogdan-Andrei Iancu (@bogdan-iancu) Dec 2003 - Jul 2018
-   4.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
-   5.  Vlad Patrascu (@rvlad-patrascu)     May 2017 - Apr 2018
-   6.  Ionut Ionita (@ionutrazvanionita)   Feb 2015 - May 2017
-   7.  Julián Moreno Patiño                Feb 2016 - Feb 2016
-   8.  Dusan Klinec                        Dec 2015 - Dec 2015
-   9.  Vlad Paiu (@vladpaiu)               Jun 2011 - Oct 2015
-   10. Ryan Bullock (@rrb3942)             Mar 2012 - Sep 2012
+   1.  Liviu Chircu (@liviuchircu)         Jan 2013 - Aug 2019
+   2.  Razvan Crainea (@razvancrainea)     Aug 2010 - Aug 2019
+   3.  Bogdan-Andrei Iancu (@bogdan-iancu) Dec 2003 - Apr 2019
+   4.  Vlad Patrascu (@rvlad-patrascu)     May 2017 - Apr 2019
+   5.  Dan Pascu (@danpascu)               Jul 2004 - Sep 2018
+   6.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
+   7.  Ionut Ionita (@ionutrazvanionita)   Feb 2015 - May 2017
+   8.  Julián Moreno Patiño                Feb 2016 - Feb 2016
+   9.  Dusan Klinec                        Dec 2015 - Dec 2015
+   10. Vlad Paiu (@vladpaiu)               Jun 2011 - Oct 2015
 
-   All remaining contributors: Irina-Maria Stanescu, Alex
-   Massover, Sergio Gutierrez, Ovidiu Sas (@ovidiusas), Dan Pascu
-   (@danpascu), Henning Westerholt (@henningw), Daniel-Constantin
-   Mierla (@miconda), Konstantin Bokarius, Edson Gellert Schubert,
-   Elena-Ramona Modroiu, Jesus Rodrigues, Julien Blache, Peter
-   Nixon, Maksym Sobolyev (@sobomax), Juha Heinanen (@juha-h), Jan
-   Janak (@janakj), Jiri Kuthan (@jiriatipteldotorg), Andrei
-   Pelinescu-Onciul, Elena-Ramona Modroiu, Nils Ohlmeier, Karel
-   Kozlik.
+   All remaining contributors: Ryan Bullock (@rrb3942),
+   Irina-Maria Stanescu, Alex Massover, Sergio Gutierrez, Ovidiu
+   Sas (@ovidiusas), Henning Westerholt (@henningw),
+   Daniel-Constantin Mierla (@miconda), Konstantin Bokarius, Edson
+   Gellert Schubert, Elena-Ramona Modroiu, Jesus Rodrigues, Julien
+   Blache, Peter Nixon, Maksym Sobolyev (@sobomax), Juha Heinanen
+   (@juha-h), Jan Janak (@janakj), Jiri Kuthan
+   (@jiriatipteldotorg), Andrei Pelinescu-Onciul, Elena-Ramona
+   Modroiu, Nils Ohlmeier, Karel Kozlik.
 
    (1) including any documentation-related commits, excluding
    merge commits

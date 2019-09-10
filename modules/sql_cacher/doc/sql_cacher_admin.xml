@@ -65,8 +65,9 @@
 		</para>
 		<para>
 		The caching entry is specified via this parameter that has it's own
-		subparameters. Each of those parameters are separted by a configurable
-		delimiter and have the following format:
+		subparameters. Each of those parameters are separated by a
+		delimiter configured by <xref linkend="param_spec_delimiter"/>
+		and have the following format:
 		<para><emphasis>param_name=param_value</emphasis></para>
 		The parameters are:
 		<itemizedlist>
@@ -87,7 +88,8 @@
 			</para></listitem>
 			<listitem><para>
 			<emphasis>columns</emphasis> : names of the columns to be cached from the
-			SQL database, separated by a configurable delimiter
+			SQL database, separated by a delimiter configured by
+			<xref linkend="param_columns_delimiter"/>.
 			<para>If not present, all the columns from the table will be cached</para>
 			</para></listitem>
 			<listitem><para>
@@ -237,7 +239,7 @@ modparam("sql_cacher", "full_caching_expire", 3600)
 		<title><varname>reload_interval</varname> (integer)</title>
 		<para>
 		This parameter represents how many seconds before the data expires (for full caching) the
-		automatic reloading is triggerd.
+		automatic reloading is triggered.
 		</para>
 		<para>
 		The default value is <quote>60 s</quote>.
@@ -273,7 +275,7 @@ modparam("sql_cacher", "reload_interval", 5)
 		<para>Parameters:</para>
 		<itemizedlist>
 			<listitem><para>
-				<emphasis>id</emphasis> (optional) - the caching entry's id
+				<emphasis>id</emphasis> - the caching entry's id
 			</para></listitem>
 			<listitem><para>
 				<emphasis>key</emphasis> (optional) - the specific key to be reloaded, 
@@ -284,9 +286,9 @@ modparam("sql_cacher", "reload_interval", 5)
 			<title><function moreinfo="none">sql_cacher_reload</function> usage</title>
 			<programlisting format="linespecific">
 ...
-$ opensipsctl fifo sql_cacher_reload subs_caching
+$ opensips-cli -x mi sql_cacher_reload subs_caching
 ...
-$ opensipsctl fifo sql_cacher_reload subs_caching alice@domain.com
+$ opensips-cli -x mi sql_cacher_reload subs_caching alice@domain.com
 ...
 </programlisting>
 			</example>	
@@ -303,7 +305,7 @@ $ opensipsctl fifo sql_cacher_reload subs_caching alice@domain.com
 				<itemizedlist>
 					<listitem><para>
 					<emphasis>sep</emphasis> : separator configured by
-					<quote>pvar_delimiter</quote> parameter
+					<xref linkend="param_pvar_delimiter"/>
 					</para></listitem>
 					<listitem><para>
 					<emphasis>id</emphasis>  : cache entry id

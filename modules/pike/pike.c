@@ -74,10 +74,10 @@ struct list_link*       timer = 0;
 static str pike_block_event = str_init("E_PIKE_BLOCKED");
 event_id_t pike_event_id = EVI_ERROR;
 
-
 static cmd_export_t cmds[]={
-	{"pike_check_req", (cmd_function)pike_check_req,  0,  0, 0, REQUEST_ROUTE},
-	{0,0,0,0,0,0}
+	{"pike_check_req", (cmd_function)pike_check_req, {{0,0,0}},
+		REQUEST_ROUTE},
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t params[]={
@@ -89,22 +89,26 @@ static param_export_t params[]={
 	{0,0,0}
 };
 
-
 static mi_export_t mi_cmds [] = {
-	{MI_PIKE_LIST, "lists the nodes in the pike tree",
-		mi_pike_list,   MI_NO_INPUT_FLAG,  0,  0 },
-	{MI_PIKE_RM, "remove a node from the tree",
-		mi_pike_rm,     0,                 0,  0 },
-	{0,0,0,0,0,0}
+	{MI_PIKE_LIST, "lists the nodes in the pike tree", 0, 0, {
+		{mi_pike_list, {0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{MI_PIKE_RM, "remove a node from the tree", 0, 0, {
+		{mi_pike_rm, {"ip", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{EMPTY_MI_EXPORT}
 };
-
 
 struct module_exports exports= {
 	"pike",
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	0,				 /* load function */
 	NULL,            /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,
 	0,
 	params,
@@ -116,7 +120,8 @@ struct module_exports exports= {
 	pike_init,   /* module initialization function */
 	(response_function) 0,
 	(destroy_function) pike_exit,   /* module exit function */
-	0  /* per-child init function */
+	0,           /* per-child init function */
+	0            /* reload confirm function */
 };
 
 
@@ -169,7 +174,7 @@ static int pike_init(void)
 		TIMER_FLAG_DELAY_ON_DELAY );
 
 	if (pike_route_s && *pike_route_s) {
-		rt = get_script_route_ID_by_name( pike_route_s, rlist, RT_NO);
+		rt = get_script_route_ID_by_name(pike_route_s,sroutes->request,RT_NO);
 		if (rt<1) {
 			LM_ERR("route <%s> does not exist\n",pike_route_s);
 			return -1;

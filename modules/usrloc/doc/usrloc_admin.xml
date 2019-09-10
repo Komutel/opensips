@@ -56,7 +56,7 @@
 		order to share the reachability of these contacts with the global
 		OpenSIPS user location cluster, registrar nodes will only publish some
 		light "metadata" entries for any new Addresses-of-Record which are
-		reachable from it. These entries will cause other nodes to also fork
+		reachable from them. These entries will cause other nodes to also fork
 		additional SIP branches pointing to the above-mentioned registrar upon
 		receiving a call for the above-mentioned Addresses-of-Record.
 		</para>
@@ -93,8 +93,7 @@
 		Currently, the metadata information may be published to NoSQL databases
 		which support key/multi-value column-like associations. Example known
 		backends to support these abstractions at the time of writing are
-		MongoDB and Cassandra. Of these two, only the MongoDB OpenSIPS driver
-		has been so far extended to implement the required NoSQL API endpoints.
+		MongoDB and Cassandra.
 		</para>
 		<para>
 		The <ulink url="http://www.opensips.org/Documentation/Tutorials-Distributed-User-Location-Federation">
@@ -106,8 +105,8 @@
 	<section id="full-sharing-topology" xreflabel="Full Sharing Topology">
 		<title>"Full Sharing" Topology</title>
 		<para>
-		A <emphasis>fully sharing</emphasis> user location propagates
-		(broadcasts) contact information to all data nodes (OpenSIPS or NoSQL).
+		A <emphasis>fully sharing</emphasis> user location broadcasts contact
+		information to all data nodes (OpenSIPS or NoSQL).
 		The main assumption behind this mode is that any routing
 		restrictions have been alleviated beforehand. Consequently, either SIP
 		traffic egressing from a "full sharing"
@@ -133,12 +132,10 @@
 		nodes configuration, both of which make use of a shared virtual IP.
 		</para>
 		<para>
-		Currently, registrations may optionally be fully managed inside NoSQL
+		Registrations may optionally be fully managed inside NoSQL
 		databases which support key/multi-value column-like associations.
-		Example known backends to support these abstractions at the time of
-		writing are MongoDB and Cassandra. Of these two, only the MongoDB
-		OpenSIPS driver has been so far extended to implement the required
-		NoSQL API endpoints.
+		Example known backends to currently support these abstractions are MongoDB
+		and Apache Cassandra.
 		</para>
 		<para>
 		The <ulink url="http://www.opensips.org/Documentation/Tutorials-Distributed-User-Location-Full-Sharing">
@@ -157,7 +154,7 @@
 		each other, they will each scan the entire contact dataset, thus
 		periodically sending "N pings" instead of "1 ping" for each contact.
 		This difference directly affects service scalability, as well as the
-		amount of consumed cloud compute resources such as CPU and network
+		amount of consumed resources such as CPU and network
 		bandwidth, both on the service and client side.
 		</para>
 		<para>
@@ -165,7 +162,9 @@
 		which makes all nodes aware of each others' presence. Thus, the
 		distributed user location node topologies are able to collectively
 		partition the pinging workload and spread it evenly across the current
-		number of cluster nodes, at any given point in time.
+		number of cluster nodes, at any given point in time.  The
+		<xref linkend="param_pinging_mode"/> module parameter describes the
+		built-in pinging heuristics in more detail.
 		</para>
 	</section>
 	</section>
@@ -258,17 +257,15 @@
 	<section id="exported_parameters" xreflabel="Exported Parameters">
 	<title>Exported Parameters</title>
 	<section id="param_nat_bflag" xreflabel="nat_bflag">
-		<title><varname>nat_bflag</varname> (string/integer)</title>
+		<title><varname>nat_bflag</varname> (string)</title>
 		<para>
 		The name of the branch flag to be used as NAT marker (if the contact
 		is or not natted). This is a branch flag and it will be imported and
-		used by all other modules depending of usrloc module.
+		used by all other modules depending on the usrloc module.
 		</para>
 		<para>
-		<emphasis>WARNING: </emphasis>Setting INT flags is deprecated!
-		Use quoted strings instead!
 		<emphasis>
-			Default value is <quote>NULL</quote> (not set).
+			Default value is NULL (not set).
 		</emphasis>
 		</para>
 		<example>
@@ -836,9 +833,10 @@ modparam("usrloc", "db_mode", 2)
 			expired contacts and flushes all modified or new contacts to
 			database.  Use this scheme if you encounter high-load peaks
 			and want them to process as fast as possible. The mode will
-			not help at all if the load is high all the time.  Also, latency
-			of this mode is much lower than latency of mode 1, but slightly
-			higher than latency of mode 0.
+			not help at all if the load is high all the time.  The
+			added latency on the SIP signaling when using this asynchronous
+			preset is much lower than the one added by the safe but
+			blocking, "single-instance-sql-write-through" preset.
 			</para>
 		</listitem>
 		<listitem>
@@ -913,7 +911,7 @@ modparam("usrloc", "working_mode_preset", "full-sharing-cachedb-cluster")
 		<para>
 			<emphasis role='bold'>This parameter will get overridden if either
 			<xref linkend='param_working_mode_preset'/> or
-			<xref linkend='param_db_mode'/> are set.</emphasis>
+			<xref linkend='param_db_mode'/> is set.</emphasis>
 		</para>
 		<para>
 		The behavior of the global OpenSIPS user location cluster. Refer to
@@ -1349,31 +1347,75 @@ modparam("usrloc", "latency_event_min_us_delta", 300000)
 		</example>
 	</section>
 
-	<section id="param_shared_pinging" xreflabel="shared_pinging">
-		<title><varname>shared_pinging</varname> (integer)</title>
+	<section id="param_pinging_mode" xreflabel="pinging_mode">
+		<title><varname>pinging_mode</varname> (string)</title>
 		<para>
-		Only relevant in a "full sharing" or "full sharing cachedb"
-		<xref linkend="param_cluster_mode"/>.  If set to non-zero, the overall
-		pinging workload will be equally spread across cluster nodes with the
-		help of the clustering layer that keeps track of the current number of
-		active nodes.
+		Depending on the <xref linkend="param_cluster_mode"/>, the module
+		can perform contact pinging using one of at most two possible
+		heuristics:
+		<itemizedlist>
+		<listitem>
+			<para><emphasis role='bold'>"ownership"</emphasis> - this instance
+				will only attempt to ping a contact if it decides it is the
+				logical owner of the contact.  If a shared tag is attached to
+				a contact, a node will keep sending pings to that contact as
+				long as it owns the respective tag.  If no shared tag has been
+				specified for a given contact, the default is to assume
+				permanent ownership of the contact and always ping it.
+			</para>
+		</listitem>
+		<listitem>
+			<para><emphasis role='bold'>"cooperation"</emphasis> - the
+				assumption behind this pinging heuristic is that all
+				user location cluster nodes are symmetrical (possibly
+				front-ended by a SIP traffic balancing entity), such that
+				<emphasis role='bold'>either </emphasis> of them can ping
+				<emphasis role='bold'>any</emphasis> contact.
+				Under this assumption, all currently online user location
+				cluster nodes will cooperate and evenly split the pinging
+				workload between them by hashing AoRs modulo
+				current_number_of_online_nodes, and only picking the ones that
+				they are responsible for.
+			</para>
+		</listitem>
+		</itemizedlist>
 		</para>
+		<table frame='all'><title>Possible values for the "pinging_mode",
+				depending on the current "cluster_mode"</title>
+		<tgroup cols='6' align='left' colsep='1' rowsep='1'>
+		<tbody>
+		<row>
+			<entry><xref linkend="param_cluster_mode"/></entry>
+			<entry align="center">none</entry>
+			<entry align="center">federation-cachedb</entry>
+			<entry align="center">full-sharing</entry>
+			<entry align="center">full-sharing-cachedb</entry>
+			<entry align="center">sql-only</entry>
+		</row>
+		<row>
+			<entry><xref linkend="param_pinging_mode"/></entry>
+			<entry align="center"><emphasis role='bold'>ownership</emphasis></entry>
+			<entry align="center"><emphasis role='bold'>ownership</emphasis></entry>
+			<entry align="center"><emphasis role='bold'>cooperation</emphasis> / ownership</entry>
+			<entry align="center"><emphasis role='bold'>cooperation</emphasis></entry>
+			<entry align="center"><emphasis>unmaintained</emphasis></entry>
+		</row>
+		</tbody>
+		</tgroup>
+		</table>
 		<para>
-		Disabling this parameter may be useful in simple active/backup
-		setups, where only the active node must perform the pinging.
+			Notice that only the <emphasis role='bold'>"full-sharing"</emphasis>
+			clustering mode allows some flexibility -- all other modes are
+			logically tied to a single pinging logic.  Any unaccepted value,
+			according to the above table, set
+			for those modes will be silently discarded.
 		</para>
-		<para>
-			<emphasis>
-				Default value is <quote>1 (enabled)</quote>.
-			</emphasis>
-		</para>
-
 		<example>
-		<title>Set <varname>shared_pinging</varname> parameter</title>
+		<title>Set <varname>pinging_mode</varname> parameter</title>
 		<programlisting format="linespecific">
 ...
-# do not partition the pinging workload across cluster nodes
-modparam("usrloc", "shared_pinging", 0)
+# prepare an active/backup "full-sharing" setup, with no front-end
+modparam("usrloc", "pinging_mode", "ownership")
 ...
 </programlisting>
 		</example>
@@ -1427,11 +1469,11 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 		<para>Parameters: </para>
 		<itemizedlist>
 			<listitem><para>
-				<emphasis>table name</emphasis> - table where the AOR
+				<emphasis>table_name</emphasis> - table where the AOR
 				is removed from (Ex: location).
 			</para></listitem>
 			<listitem><para>
-				<emphasis>AOR</emphasis> - user AOR in username[@domain]
+				<emphasis>aor</emphasis> - user AOR in username[@domain]
 				format (domain must be supplied only if use_domain option
 				is on).
 			</para></listitem>
@@ -1502,7 +1544,7 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 				will be added (Ex: location).
 			</para></listitem>
 			<listitem><para>
-				<emphasis>AOR</emphasis> - user AOR in username[@domain]
+				<emphasis>aor</emphasis> - user AOR in username[@domain]
 				format (domain must be supplied only if use_domain option
 				is on).
 			</para></listitem>
@@ -1513,7 +1555,7 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 				<emphasis>expires</emphasis> - expires value of the contact
 			</para></listitem>
 			<listitem><para>
-				<emphasis>Q</emphasis> - Q value of the contact
+				<emphasis>q</emphasis> - Q value of the contact
 			</para></listitem>
 			<listitem><para>
 				<emphasis>unused</emphasis> - unused attribute (kept for
@@ -1544,11 +1586,11 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 		<para>Parameters: </para>
 		<itemizedlist>
 			<listitem><para>
-				<emphasis>table name</emphasis> - table where the AOR
+				<emphasis>table_name</emphasis> - table where the AOR
 				resides (Ex: location).
 			</para></listitem>
 			<listitem><para>
-				<emphasis>AOR</emphasis> - user AOR in username[@domain]
+				<emphasis>aor</emphasis> - user AOR in username[@domain]
 				format (domain must be supplied only if use_domain option
 				is on).
 			</para></listitem>
@@ -1741,6 +1783,15 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 				successful ping for this contact. Until the first ping reply
 				for a given contact arrives, its pinging latency will be 0.
 			</para></listitem>
+			<listitem><para>
+				<emphasis>shtag</emphasis> - The shared tag of the contact,
+				which helps determine if the current node owns the contact
+				(e.g. possibly using the <emphasis role='bold'>$cluster.sh_tag
+				</emphasis> pseudo-variable in order to perform the check).
+			</para>
+			<para><emphasis>NOTICE: </emphasis>If a contact has no shared tag
+				attached to it, this key will map to a "" (empty string) value!
+			</para></listitem>
 		</itemizedlist>
 	</section>
 
@@ -1775,7 +1826,7 @@ modparam("usrloc", "mi_dump_kv_store", 1)
 		<function moreinfo="none">E_UL_LATENCY_UPDATE</function>
 		</title>
 		<para>
-		This event is raised when a contact pinging latency passes either
+		This event is raised when a contact pinging latency matches either
 		of the <xref linkend="param_latency_event_min_us"/> or
 		<xref linkend="param_latency_event_min_us_delta"/> filters. If none of
 		these filters is set, this event will get raised for each successful

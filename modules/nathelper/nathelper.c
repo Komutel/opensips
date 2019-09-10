@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2003-2008 Sippy Software, Inc., http://www.sippysoft.com
+ * Copyright (C) 2005-2019 OpenSIPS Project
  *
  * This file is part of opensips, a free SIP server.
  *
@@ -81,6 +82,8 @@ static int sipping_latency_flag = -1;  /* by the code imported by sip_pinger*/
 
 #include "nh_table.h"
 
+#include "nh_clustering.h"
+
 
 /* NAT UAC test constants */
 #define	NAT_UAC_TEST_C_1918	0x01
@@ -107,13 +110,12 @@ static int sipping_latency_flag = -1;  /* by the code imported by sip_pinger*/
 #define STORE_BRANCH_CTID \
 	(sipping_flag && (rm_on_to_flag || sipping_latency_flag))
 
-static int nat_uac_test_f(struct sip_msg* msg, char* str1, char* str2);
-static int fix_nated_contact_f(struct sip_msg *, char *, char *);
-static int fix_nated_sdp_f(struct sip_msg *, char *, char *, char *);
+static int nat_uac_test_f(struct sip_msg* msg, int *tests);
+static int fix_nated_contact_f(struct sip_msg* msg, str *params);
+static int fix_nated_sdp_f(struct sip_msg* msg, int* level, str *ip,
+						str *new_sdp_lines);
 static int fix_nated_register_f(struct sip_msg *, char *, char *);
-static int fixup_fix_nated_register(void** param, int param_no);
-static int fixup_fix_sdp(void** param, int param_no);
-static int add_rcv_param_f(struct sip_msg *, char *, char *);
+static int add_rcv_param_f(struct sip_msg* msg, int *flag);
 static int get_oldip_fields_value(modparam_t type, void* val);
 
 static void nh_timer(unsigned int, void *);
@@ -123,8 +125,10 @@ static int mod_init(void);
 static void mod_destroy(void);
 
 /*mi commands*/
-static struct mi_root* mi_enable_natping(struct mi_root* cmd_tree,
-		void* param );
+static mi_response_t *mi_enable_natping(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+static mi_response_t *mi_enable_natping_1(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 //static
 usrloc_api_t ul;
 static int cblen = 0;
@@ -137,17 +141,7 @@ int ping_checker_interval = 1;
 int ping_threshold = 3;
 int max_pings_lost=3;
 
-static struct {
-	const char *cnetaddr;
-	uint32_t netaddr;
-	uint32_t mask;
-} nets_1918[] = {
-	{"10.0.0.0",    0, 0xffffffffu << 24},	/* RFC 1918 */
-	{"172.16.0.0",  0, 0xffffffffu << 20},  /* RFC 1918 */
-	{"192.168.0.0", 0, 0xffffffffu << 16},  /* RFC 1918 */
-	{"100.64.0.0",  0, 0xffffffffu << 22},	/* RFC 6598 */
-	{NULL, 0, 0}
-};
+
 /*
  * Extract URI from the Contact header field - iterates through all contacts
  */
@@ -222,36 +216,24 @@ int skip_oldip=0;
 /*0-> disabled, 1 ->enabled*/
 unsigned int *natping_state=0;
 
-
 static cmd_export_t cmds[] = {
-	{"fix_nated_contact",  (cmd_function)fix_nated_contact_f,    0,
-		0, 0,
+	{"fix_nated_contact",  (cmd_function)fix_nated_contact_f, {
+		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0}, {0,0,0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"fix_nated_contact",  (cmd_function)fix_nated_contact_f,    1,
-		fixup_str_null, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"fix_nated_sdp",      (cmd_function)fix_nated_sdp_f,        1,
-		fixup_fix_sdp,  0,
+	{"fix_nated_sdp",      (cmd_function)fix_nated_sdp_f, {
+		{CMD_PARAM_INT,0,0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT,0,0}, {0,0,0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"fix_nated_sdp",      (cmd_function)fix_nated_sdp_f,        2,
-		fixup_fix_sdp, 0,
+	{"nat_uac_test",       (cmd_function)nat_uac_test_f, {
+		{CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"fix_nated_sdp",      (cmd_function)fix_nated_sdp_f,        3,
-		fixup_fix_sdp, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"nat_uac_test",       (cmd_function)nat_uac_test_f,         1,
-		fixup_uint_null, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"fix_nated_register", (cmd_function)fix_nated_register_f,   0,
-		fixup_fix_nated_register, 0,
-		REQUEST_ROUTE },
-	{"add_rcv_param",      (cmd_function)add_rcv_param_f,        0,
-		0, 0,
-		REQUEST_ROUTE },
-	{"add_rcv_param",      (cmd_function)add_rcv_param_f,        1,
-		fixup_uint_null, 0,
-		REQUEST_ROUTE },
-	{0, 0, 0, 0, 0, 0}
+	{"fix_nated_register", (cmd_function)fix_nated_register_f,
+		{{0,0,0}}, REQUEST_ROUTE},
+	{"add_rcv_param",  (cmd_function)add_rcv_param_f, {
+		{CMD_PARAM_INT|CMD_PARAM_OPT,0,0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t params[] = {
@@ -264,24 +246,27 @@ static param_export_t params[] = {
 	{"sipping_from",             STR_PARAM, &sipping_from.s        },
 	{"sipping_method",           STR_PARAM, &sipping_method.s      },
 	{"sipping_bflag",            STR_PARAM, &sipping_flag_str      },
-	{"sipping_bflag",            INT_PARAM, &sipping_flag          },
 	{"sipping_latency_flag",     STR_PARAM, &sipping_latency_flag_str},
-	{"sipping_latency_flag",     INT_PARAM, &sipping_latency_flag  },
 	{"remove_on_timeout_bflag",  STR_PARAM, &rm_on_to_flag_str     },
-	{"remove_on_timeout_bflag",  INT_PARAM, &rm_on_to_flag         },
 	{"natping_tcp",              INT_PARAM, &natping_tcp           },
 	{"natping_partitions",       INT_PARAM, &natping_partitions    },
 	{"natping_socket",           STR_PARAM, &natping_socket        },
 	{"oldip_skip",			     STR_PARAM|USE_FUNC_PARAM,
-								   (void*)get_oldip_fields_value},
-	{"ping_threshold",		     INT_PARAM, &ping_threshold		},
-	{"max_pings_lost",		     INT_PARAM, &max_pings_lost		},
+								   (void*)get_oldip_fields_value   },
+	{"ping_threshold",		     INT_PARAM, &ping_threshold        },
+	{"max_pings_lost",		     INT_PARAM, &max_pings_lost        },
+	{"cluster_id",               INT_PARAM, &nh_cluster_id         },
+	{"cluster_sharing_tag",      STR_PARAM, &nh_cluster_shtag      },
 	{0, 0, 0}
 };
 
 static mi_export_t mi_cmds[] = {
-	{MI_SET_NATPING_STATE, 0, mi_enable_natping,    0,                0, 0},
-	{ 0, 0, 0, 0, 0, 0}
+	{MI_SET_NATPING_STATE, 0, 0, 0, {
+		{mi_enable_natping, {0}},
+		{mi_enable_natping_1, {"status", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 static module_dependency_t *get_deps_natping_interval(param_export_t *param)
@@ -307,7 +292,9 @@ struct module_exports exports = {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	0,				 /* load function */
 	&deps,           /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,
 	NULL,
 	params,
@@ -319,7 +306,8 @@ struct module_exports exports = {
 	mod_init,
 	0,           /* sipping_rpl_filter() - optional reply processing */
 	mod_destroy, /* destroy function */
-	0
+	0,
+	0            /* reload confirm function */
 };
 
 
@@ -348,82 +336,42 @@ get_oldip_fields_value(modparam_t type, void* val)
 	return 0;
 }
 
-static int
-fixup_fix_sdp(void** param, int param_no)
+static mi_response_t *mi_enable_natping(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	pv_elem_t *model;
-	str s;
+	mi_response_t *resp;
+	mi_item_t *resp_obj;
 
-	if (param_no==1) {
-		/* flags */
-		return fixup_uint_null( param, param_no);
-	}
-	/* new IP */
-	model=NULL;
-	s.s = (char*)(*param); s.len = strlen(s.s);
-	if(pv_parse_format(&s,&model)<0) {
-		LM_ERR("wrong format[%s]!\n", (char*)(*param));
-		return E_UNSPEC;
-	}
-	if (model==NULL) {
-		LM_ERR("empty parameter!\n");
-		return E_UNSPEC;
-	}
-	*param = (void*)model;
-	return 0;
-}
-
-static int fixup_fix_nated_register(void** param, int param_no)
-{
-	if (rcv_avp_name < 0) {
-		LM_ERR("you must set 'received_avp' parameter. Must be same value as"
-				" parameter 'received_avp' of registrar module\n");
-		return -1;
-	}
-	return 0;
-}
-
-
-
-
-static struct mi_root* mi_enable_natping(struct mi_root* cmd_tree,
-											void* param )
-{
-	unsigned int value;
-	struct mi_node* node;
-	struct mi_root* root;
-	char *s;
-	int len;
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
+		return NULL;
 
 	if (natping_state==NULL)
-		return init_mi_tree( 400, MI_PING_DISABLED, MI_PING_DISABLED_LEN);
+		return init_mi_error(400, MI_SSTR(MI_PING_DISABLED));
 
-	node = cmd_tree->node.kids;
-	if(node == NULL) {
-		root = init_mi_tree( 200, MI_OK_S, MI_OK_LEN);
-		if (root==NULL)
-			return NULL;
-		node = &root->node;
-		s =  int2str(*natping_state, &len);
-		if (!add_mi_node_child(node, MI_DUP_VALUE, MI_SSTR("Status"), s, len)){
-				LM_ERR("cannot add the child node to the tree\n");
-				goto error;
-			}
-		return root;
+	if (add_mi_number(resp_obj, MI_SSTR("Status"), *natping_state) < 0) {
+		free_mi_response(resp);
+		return NULL;
 	}
 
-	value = 0;
-	if( strno2int( &node->value, &value) <0)
-		goto error;
-
-	(*natping_state) = value?1:0;
-
-	return  init_mi_tree( 200, MI_OK_S, MI_OK_LEN);
-error:
-	return init_mi_tree( 400, MI_BAD_PARM_S, MI_BAD_PARM_LEN);
+	return resp;
 }
 
+static mi_response_t *mi_enable_natping_1(const mi_params_t *params,
+								struct mi_handler *async_hdl)
+{
+	int status;
 
+	if (natping_state==NULL)
+		return init_mi_error(400, MI_SSTR(MI_PING_DISABLED));
+
+	if (get_mi_int_param(params, "status", &status) < 0)
+		return init_mi_param_error();
+
+	(*natping_state) = status?1:0;
+
+	return init_mi_result_ok();
+}
 
 static int init_raw_socket(void)
 {
@@ -488,7 +436,6 @@ mod_init(void)
 	int i;
 	bind_usrloc_t bind_usrloc;
 	str socket_str;
-	struct in_addr addr;
 	pv_spec_t avp_spec;
 	str s;
 
@@ -524,7 +471,7 @@ mod_init(void)
 
 	/* enable all the pinging stuff only if pinging interval is set */
 	if (natping_interval > 0) {
-		bind_usrloc = (bind_usrloc_t)find_export("ul_bind_usrloc", 1, 0);
+		bind_usrloc = (bind_usrloc_t)find_export("ul_bind_usrloc", 0);
 		if (!bind_usrloc) {
 			LM_ERR("can't find usrloc module\n");
 			return -1;
@@ -536,7 +483,7 @@ mod_init(void)
 		if (force_socket_str) {
 			socket_str.s=force_socket_str;
 			socket_str.len=strlen(socket_str.s);
-			force_socket=grep_sock_info(&socket_str,0,0);
+			force_socket=grep_internal_sock_info(&socket_str,0,0);
 		}
 
 		/* create raw socket? */
@@ -565,15 +512,12 @@ mod_init(void)
 			return -1;
 		}
 
-		fix_flag_name(sipping_flag_str, sipping_flag);
 		sipping_flag=get_flag_id_by_name(FLAG_TYPE_BRANCH, sipping_flag_str);
 		sipping_flag = (sipping_flag==-1)?0:(1<<sipping_flag);
 
-		fix_flag_name(rm_on_to_flag_str, rm_on_to_flag);
 		rm_on_to_flag=get_flag_id_by_name(FLAG_TYPE_BRANCH, rm_on_to_flag_str);
 		rm_on_to_flag = (rm_on_to_flag==-1)?0:(1<<rm_on_to_flag);
 
-		fix_flag_name(sipping_latency_flag_str, sipping_latency_flag);
 		sipping_latency_flag = get_flag_id_by_name(FLAG_TYPE_BRANCH,
 		                                           sipping_latency_flag_str);
 		sipping_latency_flag = (sipping_latency_flag==-1)?
@@ -640,13 +584,10 @@ mod_init(void)
 		return -1;
 	}
 
-	/* Prepare 1918/6598 networks list */
-	for (i = 0; nets_1918[i].cnetaddr != NULL; i++) {
-		if (inet_aton(nets_1918[i].cnetaddr, &addr) != 1)
-			abort();
-		nets_1918[i].netaddr = ntohl(addr.s_addr) & nets_1918[i].mask;
+	if (nh_cluster_id>0 && nh_init_cluster()<0) {
+		LM_ERR("failed to initialized the clustering support\n");
+		return -1;
 	}
-
 
 	return 0;
 }
@@ -683,7 +624,7 @@ isnulladdr(str *sx, int pf)
  * of the packet.
  */
 static int
-fix_nated_contact_f(struct sip_msg* msg, char* str1, char* str2)
+fix_nated_contact_f(struct sip_msg* msg, str *params)
 {
 	int len, len1;
 	char *cp, *buf, temp, *p;
@@ -693,7 +634,6 @@ fix_nated_contact_f(struct sip_msg* msg, char* str1, char* str2)
 	struct sip_uri uri;
 	str hostport, left, left2;
 	int is_enclosed;
-	str *params = (str*)str1;
 
 	if (params && params->len==0)
 		params = 0;
@@ -799,36 +739,6 @@ fix_nated_contact_f(struct sip_msg* msg, char* str1, char* str2)
 
 
 /*
- * Test if IP address pointed to by saddr belongs to RFC1918 / RFC6598 networks
- */
-static inline int
-is1918addr(str *saddr)
-{
-	struct in_addr addr;
-	uint32_t netaddr;
-	int i, rval;
-	char backup;
-
-	rval = -1;
-	backup = saddr->s[saddr->len];
-	saddr->s[saddr->len] = '\0';
-	if (inet_aton(saddr->s, &addr) != 1)
-		goto theend;
-	netaddr = ntohl(addr.s_addr);
-	for (i = 0; nets_1918[i].cnetaddr != NULL; i++) {
-		if ((netaddr & nets_1918[i].mask) == nets_1918[i].netaddr) {
-			rval = 1;
-			goto theend;
-		}
-	}
-	rval = 0;
-
-theend:
-	saddr->s[saddr->len] = backup;
-	return rval;
-}
-
-/*
  * test for occurrence of RFC1918 / RFC6598 IP address in Contact HF
  */
 static int
@@ -839,7 +749,7 @@ contact_1918(struct sip_msg* msg)
 	contact_t* c;
 
 	for( hdr=NULL,c=NULL ; get_contact_uri(msg, &uri, &c, &hdr)==0 ; )
-		if ( is1918addr(&(uri.host)) == 1) return 1;
+		if ( ip_addr_is_1918(&(uri.host)) == 1) return 1;
 
 	return 0;
 }
@@ -882,7 +792,7 @@ sdp_1918(struct sip_msg* msg)
 		if (pf != AF_INET || isnulladdr(&ip, pf))
 			return 0;
 
-		ret |= (is1918addr(&ip) == 1) ? 1 : 0;
+		ret |= (ip_addr_is_1918(&ip) == 1) ? 1 : 0;
 	}
 
 	return ret;
@@ -895,7 +805,7 @@ static int
 via_1918(struct sip_msg* msg)
 {
 
-	return (is1918addr(&(msg->via1->host)) == 1) ? 1 : 0;
+	return (ip_addr_is_1918(&(msg->via1->host)) == 1) ? 1 : 0;
 }
 
 /*
@@ -940,16 +850,12 @@ contact_rport(struct sip_msg* msg)
 
 
 static int
-nat_uac_test_f(struct sip_msg* msg, char* str1, char* str2)
+nat_uac_test_f(struct sip_msg* msg, int *tests)
 {
-	int tests;
-
-	tests = (int)*(unsigned int *)str1;
-
 	/* return true if any of the NAT-UAC tests holds */
 
 	/* test if the source port is different from the port in Via */
-	if ((tests & NAT_UAC_TEST_RPORT) &&
+	if ((*tests & NAT_UAC_TEST_RPORT) &&
 		 (msg->rcv.src_port!=(msg->via1->port?msg->via1->port:SIP_PORT)) ){
 		return 1;
 	}
@@ -957,35 +863,35 @@ nat_uac_test_f(struct sip_msg* msg, char* str1, char* str2)
 	 * test if source address of signaling is different from
 	 * address advertised in Via
 	 */
-	if ((tests & NAT_UAC_TEST_V_RCVD) && received_test(msg))
+	if ((*tests & NAT_UAC_TEST_V_RCVD) && received_test(msg))
 		return 1;
 	/*
 	 * test for occurrences of RFC1918 / RFC6598 addresses in Contact
 	 * header field
 	 */
-	if ((tests & NAT_UAC_TEST_C_1918) && (contact_1918(msg)>0))
+	if ((*tests & NAT_UAC_TEST_C_1918) && (contact_1918(msg)>0))
 		return 1;
 	/*
 	 * test for occurrences of RFC1918 / RFC6598 addresses in SDP body
 	 */
-	if ((tests & NAT_UAC_TEST_S_1918) && sdp_1918(msg))
+	if ((*tests & NAT_UAC_TEST_S_1918) && sdp_1918(msg))
 		return 1;
 	/*
 	 * test for occurrences of RFC1918 / RFC6598 addresses top Via
 	 */
-	if ((tests & NAT_UAC_TEST_V_1918) && via_1918(msg))
+	if ((*tests & NAT_UAC_TEST_V_1918) && via_1918(msg))
 		return 1;
 	/*
 	 * test if source address of signaling is different from
 	 * address advertised in Contact
 	 */
-	if ((tests & NAT_UAC_TEST_C_RCVD) && contact_rcv(msg))
+	if ((*tests & NAT_UAC_TEST_C_RCVD) && contact_rcv(msg))
 		return 1;
 	/*
 	 * test if source port of signaling is different from
 	 * port advertised in Contact
 	 */
-	if ((tests & NAT_UAC_TEST_C_RPORT) && contact_rport(msg))
+	if ((*tests & NAT_UAC_TEST_C_RPORT) && contact_rport(msg))
 		return 1;
 
 	/* no test succeeded */
@@ -1195,22 +1101,13 @@ replace_sdp_ip(struct sip_msg* msg, str *org_body, char *line, str *ip, int forc
 
 
 static int
-fix_nated_sdp_f(struct sip_msg* msg, char* str1, char* str2, char* str3)
+fix_nated_sdp_f(struct sip_msg* msg, int* level, str *ip, str *new_sdp_lines)
 {
 	str body;
-	str ip;
-	str new_sdp_lines;
-	int level;
 	int forcenulladdr = 0;
 	char *buf;
 	struct lump* anchor;
 	struct body_part * p;
-
-	level = (int)*(unsigned int *)str1;
-	if (str2 && pv_printf_s( msg, (pv_elem_p)str2, &ip)!=0)
-		return -1;
-	if (str3 && pv_printf_s( msg, (pv_elem_p)str3, &new_sdp_lines)!=0)
-		return -1;
 
 	if ( parse_sip_body(msg)<0 || msg->body==NULL )
 	{
@@ -1230,14 +1127,14 @@ fix_nated_sdp_f(struct sip_msg* msg, char* str1, char* str2, char* str3)
 							 || body.len == 0)
 			continue;
 
-		if (level & (ADD_ADIRECTION | ADD_ANORTPPROXY)) {
+		if (*level & (ADD_ADIRECTION | ADD_ANORTPPROXY)) {
 			msg->msg_flags |= FL_FORCE_ACTIVE;
 			anchor = anchor_lump(msg, body.s + body.len - msg->buf, 0);
 			if (anchor == NULL) {
 				LM_ERR("anchor_lump failed\n");
 				return -1;
 			}
-			if (level & ADD_ADIRECTION) {
+			if (*level & ADD_ADIRECTION) {
 				buf = pkg_malloc((ADIRECTION_LEN + CRLF_LEN) * sizeof(char));
 				if (buf == NULL) {
 					LM_ERR("out of pkg memory\n");
@@ -1251,7 +1148,7 @@ fix_nated_sdp_f(struct sip_msg* msg, char* str1, char* str2, char* str3)
 					return -1;
 				}
 			}
-			if ((level & ADD_ANORTPPROXY) && nortpproxy_str.len) {
+			if ((*level & ADD_ANORTPPROXY) && nortpproxy_str.len) {
 				buf = pkg_malloc((nortpproxy_str.len + CRLF_LEN) * sizeof(char));
 				if (buf == NULL) {
 					LM_ERR("out of pkg memory\n");
@@ -1265,14 +1162,14 @@ fix_nated_sdp_f(struct sip_msg* msg, char* str1, char* str2, char* str3)
 					return -1;
 				}
 			}
-			if (str3) {
-				buf = pkg_malloc((new_sdp_lines.len) * sizeof(char));
+			if (new_sdp_lines) {
+				buf = pkg_malloc((new_sdp_lines->len) * sizeof(char));
 				if (buf == NULL) {
 					LM_ERR("out of pkg memory\n");
 					return -1;
 				}
-				memcpy(buf, new_sdp_lines.s, new_sdp_lines.len);
-				if (insert_new_lump_after(anchor, buf, new_sdp_lines.len, 0) == NULL) {
+				memcpy(buf, new_sdp_lines->s, new_sdp_lines->len);
+				if (insert_new_lump_after(anchor, buf, new_sdp_lines->len, 0) == NULL) {
 					LM_ERR("insert_new_lump_after failed 3\n");
 					pkg_free(buf);
 					return -1;
@@ -1280,16 +1177,16 @@ fix_nated_sdp_f(struct sip_msg* msg, char* str1, char* str2, char* str3)
 			}
 		}
 
-		if (level & FORCE_NULL_ADDR) { forcenulladdr = 1; }
+		if (*level & FORCE_NULL_ADDR) { forcenulladdr = 1; }
 
-		if (level & FIX_ORGIP) {
+		if (*level & FIX_ORGIP) {
 			/* Iterate all o= and replace ips in them. */
-			if (replace_sdp_ip(msg, &body, "o=", str2?&ip:0, forcenulladdr)==-1)
+			if (replace_sdp_ip(msg, &body, "o=", ip?ip:0, forcenulladdr)==-1)
 				return -1;
 		}
-		if (level & FIX_MEDIP) {
+		if (*level & FIX_MEDIP) {
 			/* Iterate all c= and replace ips in them. */
-			if (replace_sdp_ip(msg, &body, "c=", str2?&ip:0, forcenulladdr)==-1)
+			if (replace_sdp_ip(msg, &body, "c=", ip?ip:0, forcenulladdr)==-1)
 				return -1;
 		}
 	}
@@ -1378,7 +1275,7 @@ nh_timer(unsigned int ticks, void *timer_idx)
 
 	udomain_t *d;
 
-	if ((*natping_state) == 0)
+	if ( (*natping_state) == 0 || !nh_cluster_shtag_is_active() )
 		goto done;
 
 	if (cblen > 0) {
@@ -1590,7 +1487,7 @@ create_rcv_uri(str* uri, struct sip_msg* m)
  * forwarding of the REGISTER requuest
  */
 static int
-add_rcv_param_f(struct sip_msg* msg, char* str1, char* str2)
+add_rcv_param_f(struct sip_msg* msg, int *flag)
 {
 	contact_t* c;
 	struct lump* anchor;
@@ -1598,7 +1495,7 @@ add_rcv_param_f(struct sip_msg* msg, char* str1, char* str2)
 	str uri;
 	int hdr_param;
 
-	hdr_param = (str1 && *(unsigned int *)str1 > 0) ? 0 : 1;
+	hdr_param = (flag && *flag > 0) ? 0 : 1;
 
 	if (create_rcv_uri(&uri, msg) < 0) {
 		return -1;
@@ -1715,8 +1612,8 @@ ping_checker_timer(unsigned int ticks, void *timer_idx)
 		 * cell from the list or not */
 		lock_hash(cell->hash_id);
 
-		LM_DBG("ping expiring ping cell %lu state=%d\n",
-			cell->ct_coords, cell->state);
+		LM_DBG("ping expiring ping cell %llu state=%d\n",
+			(unsigned long long)cell->ct_coords, cell->state);
 
 		if (cell->state == PING_CELL_STATE_ANSWERED) {
 			unlock_hash(cell->hash_id);
@@ -1771,8 +1668,8 @@ ping_checker_timer(unsigned int ticks, void *timer_idx)
 
 			cell->state = PING_CELL_STATE_WAITING;
 
-			LM_DBG("moving ping cell %lu into WAIT timer with state=%d\n",
-				cell->ct_coords, cell->state);
+			LM_DBG("moving ping cell %llu into WAIT timer with state=%d\n",
+				(unsigned long long)cell->ct_coords, cell->state);
 
 			/* insert into waiting time */
 			list_add_tail( &cell->t_linker, &table->timer_list.wt_timer);
@@ -1799,8 +1696,8 @@ check_wait_timer:
 
 		lock_hash(cell->hash_id);
 
-		LM_DBG("wait expiring ping cell %lu state=%d\n",
-			cell->ct_coords, cell->state);
+		LM_DBG("wait expiring ping cell %llu state=%d\n",
+			(unsigned long long)cell->ct_coords, cell->state);
 
 		/* if not found in the mean while (via hash), delete it */
 		if (cell->state==PING_CELL_STATE_WAITING) {
@@ -1833,7 +1730,7 @@ int fix_ignore_rpl_codes(void)
 		return 0;
 
 	ignore_rpl_codes_str.len = strlen(ignore_rpl_codes_str.s);
-	chopped_codes = _parse_csv_record(&ignore_rpl_codes_str, CSV_SIMPLE);
+	chopped_codes = parse_csv_record(&ignore_rpl_codes_str);
 	if (!chopped_codes) {
 		LM_ERR("oom\n");
 		return -1;

@@ -53,20 +53,19 @@
 #include "route.h"
 #include "async.h"
 #include "transformations.h"
+#include "cmds.h"
 
 #include "sr_module_deps.h"
 
 typedef  struct module_exports* (*module_register)();
-typedef  int (*cmd_function)(struct sip_msg*, char*, char*, char*, char*,
-			char*, char*);
-typedef  int (*acmd_function)(struct sip_msg*, async_ctx *ctx,
-			char*, char*, char*, char*, char*, char*);
-typedef  int (*fixup_function)(void** param, int param_no);
-typedef  int (*free_fixup_function)(void** param, int param_no);
+typedef int (*load_function)(void);
+typedef int (*deps_function)(void);
+
 typedef  int (*response_function)(struct sip_msg*);
 typedef void (*destroy_function)();
 typedef int (*init_function)(void);
 typedef int (*child_init_function)(int rank);
+typedef int (*reload_confirm_function)(void);
 
 
 #define STR_PARAM        (1U<<0)  /* String parameter type */
@@ -107,28 +106,6 @@ typedef int (*mod_proc_wrapper)();
 #define PROC_FLAG_HAS_IPC    (1<<1)
 
 
-struct cmd_export_ {
-	char* name;             /* null terminated command name */
-	cmd_function function;  /* pointer to the corresponding function */
-	int param_no;           /* number of parameters used by the function */
-	fixup_function fixup;   /* pointer to the function called to "fix" the
-							   parameters */
-	free_fixup_function
-				free_fixup; /* pointer to the function called to free the
-							   "fixed" parameters */
-	int flags;              /* Function flags */
-};
-
-
-struct acmd_export_ {
-	char* name;              /* null terminated command name */
-	acmd_function function;  /* pointer to the corresponding function */
-	int param_no;            /* number of parameters used by the function */
-	fixup_function fixup;    /* pointer to the function called to "fix" the
-							    parameters */
-};
-
-
 struct param_export_ {
 	char* name;             /*!< null terminated param. name */
 	modparam_t type;        /*!< param. type */
@@ -150,10 +127,7 @@ typedef struct dep_export_ {
 	modparam_dependency_t mpd[];
 } dep_export_t;
 
-typedef struct cmd_export_  cmd_export_t;
-typedef struct acmd_export_ acmd_export_t;
 typedef struct proc_export_ proc_export_t;
-
 
 struct sr_module{
 	char* path;
@@ -175,7 +149,16 @@ struct module_exports{
 	char *compile_flags;            /*!< compile flags used on the module */
 	unsigned int dlflags;           /*!< flags for dlopen */
 
+	load_function load_f;           /*!< function called immediately after a
+	                                   module was loaded by dlopen */
+
 	dep_export_t *deps;             /*!< module and modparam dependencies */
+
+	deps_function deps_f;           /*!< function called just before calling
+                                       the module's initialization function
+                                       it is called once for all modules and
+                                       it is usually used to declare and
+                                       register dependencies to other moduels */
 
 	cmd_export_t* cmds;             /*!< null terminated array of the exported
 	                                   commands */
@@ -206,6 +189,9 @@ struct module_exports{
 	                                   be "destroyed", e.g: on opensips exit */
 	child_init_function init_child_f;/*!< function called by all processes
 	                                    after the fork */
+	reload_confirm_function reload_ack_f;/*!< function called during a script
+	                                    reload in order to confirm if the 
+	                                    module agrees with the new script */
 };
 
 void set_mpath(const char *new_mpath);
@@ -215,13 +201,12 @@ struct sr_module* modules; /*!< global module list*/
 int register_builtin_modules();
 int register_module(struct module_exports*, char*,  void*);
 int load_module(char* name);
-cmd_export_t* find_cmd_export_t(char* name, int param_no, int flags);
-acmd_export_t* find_acmd_export_t(char* name, int param_no);
-cmd_function find_export(char* name, int param_no, int flags);
-cmd_function find_mod_export(char* mod, char* name, int param_no, int flags);
+cmd_function find_export(char* name, int flags);
+cmd_function find_mod_export(char* mod, char* name, int flags);
 void destroy_modules();
 int init_child(int rank);
 int init_modules(void);
+int init_modules_deps(void);
 
 /*! \brief
  * Find a parameter with given type and return it's
@@ -247,10 +232,12 @@ int module_loaded(char *name);
  * NULL otherwise */
 
 /*! \brief Counts the additional the number of processes requested by modules */
-int count_module_procs();
+int count_module_procs(int flags);
 
 /*! \brief Forks and starts the additional processes required by modules */
-int start_module_procs();
+int start_module_procs(void);
 
+/*! \brief Runs the reload validation function from all modules */
+int modules_validate_reload(void);
 
 #endif

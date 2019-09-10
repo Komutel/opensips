@@ -53,6 +53,7 @@
 #include "t_msgbuilder.h"
 #include "t_lookup.h"
 #include "config.h"
+#include "t_stats.h"
 #include "../../context.h"
 
 
@@ -144,7 +145,8 @@ void put_on_wait(  struct cell  *Trans  )
 		4.									WAIT timer executed,
 											transaction deleted
 	*/
-	set_1timer( &Trans->wait_tl, WT_TIMER_LIST, 0 );
+	if (set_1timer( &Trans->wait_tl, WT_TIMER_LIST, 0 )==0)
+		stats_trans_code(Trans->uas.status);
 }
 
 
@@ -260,16 +262,16 @@ int t_relay_to( struct sip_msg  *p_msg , struct proxy_l *proxy, int flags)
 		LM_DBG("t_forward_nonack returned error \n");
 		/* we don't want to pass upstream any reply regarding replicating
 		 * a request; replicated branch must stop at us*/
-		if (!(flags&(TM_T_RELAY_repl_FLAG|TM_T_RELAY_noerr_FLAG))) {
-			reply_ret = kill_transaction( t );
-			if (reply_ret>0) {
-				/* we have taken care of all -- do nothing in
-				script */
-				LM_DBG("generation of a stateful reply on error succeeded\n");
-				ret=0;
-			}  else {
-				LM_DBG("generation of a stateful reply on error failed\n");
-			}
+		if (flags & (TM_T_RELAY_repl_FLAG|TM_T_RELAY_noerr_FLAG))
+			goto done;
+
+		reply_ret = kill_transaction( t );
+		if (reply_ret>0) {
+			/* we have taken care of all -- do nothing in script */
+			LM_DBG("generation of a stateful reply on error succeeded\n");
+			ret=0;
+		}  else {
+			LM_DBG("generation of a stateful reply on error failed\n");
 		}
 	} else {
 		LM_DBG("new transaction fwd'ed\n");

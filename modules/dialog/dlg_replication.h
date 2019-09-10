@@ -37,28 +37,17 @@
 #define REPLICATION_DLG_CREATED		1
 #define REPLICATION_DLG_UPDATED		2
 #define REPLICATION_DLG_DELETED		3
-#define DLG_SHARING_TAG_ACTIVE		4
+#define REPLICATION_DLG_CSEQ		4
 
-#define BIN_VERSION 1
-
-#define SHTAG_STATE_BACKUP 0
-#define SHTAG_STATE_ACTIVE 1
-
-struct n_send_info {
-	int node_id;
-	struct n_send_info *next;
-};
-
-struct dlg_sharing_tag {
-	str name;
-	int state;
-	int send_active_msg;
-	struct n_send_info *active_msgs_sent;
-	struct dlg_sharing_tag *next;
-};
-
-extern struct dlg_sharing_tag **shtags_list;
-extern rw_lock_t *shtags_lock;
+#define BIN_VERSION 2
+#define ensure_bin_version(pkt, needed) \
+	do { \
+		if (get_bin_pkg_version(pkt) != (needed)) { \
+			LM_INFO("discarding packet type %d, ver %d: need ver %d\n", \
+			        pkt->type, get_bin_pkg_version(pkt), (needed)); \
+			return; \
+		} \
+	} while (0)
 
 extern int dialog_repl_cluster;
 extern int profile_repl_cluster;
@@ -73,6 +62,7 @@ extern str shtag_dlg_val;
 void replicate_dialog_created(struct dlg_cell *dlg);
 void replicate_dialog_updated(struct dlg_cell *dlg);
 void replicate_dialog_deleted(struct dlg_cell *dlg);
+void replicate_dialog_cseq_updated(struct dlg_cell *dlg, int leg);
 
 int dlg_replicated_create(bin_packet_t *packet, struct dlg_cell *cell, str *ftag,
 							str *ttag, int safe);
@@ -82,16 +72,11 @@ int dlg_replicated_delete(bin_packet_t *packet);
 void receive_dlg_repl(bin_packet_t *packet);
 void rcv_cluster_event(enum clusterer_event ev, int node_id);
 
-struct mi_root *mi_sync_cl_dlg(struct mi_root *cmd, void *param);
-struct mi_root *mi_set_shtag_active(struct mi_root *cmd, void *param);
+mi_response_t *mi_sync_cl_dlg(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
 int get_shtag_state(struct dlg_cell *dlg);
 int set_dlg_shtag(struct dlg_cell *dlg, str *tag_name);
-void free_active_msgs_info(struct dlg_sharing_tag *tag);
-
-struct mi_root *mi_list_sharing_tags(struct mi_root *cmd_tree, void *param);
-
-int dlg_sharing_tag_paramf(modparam_t type, void *val);
 
 #endif /* _DIALOG_DLG_REPLICATION_H_ */
 

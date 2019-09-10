@@ -35,6 +35,10 @@
 /* the type for any sync packet, for any capability */
 #define SYNC_PACKET_TYPE 101
 
+/* values returned by shtag_get_f and shtag_set_f */
+#define SHTAG_STATE_BACKUP 0
+#define SHTAG_STATE_ACTIVE 1
+
 enum cl_node_state {
 	STATE_DISABLED,	/* don't send any messages and drop received ones */
 	STATE_ENABLED
@@ -115,7 +119,8 @@ typedef int (*get_my_sip_addr_f)(int cluster_id, str *out_addr);
  * This function operates on a set of nodes which are reachable and
  * synchronized/OK (for a certain capability).
  *
- * @nr_nodes - output parameter, the number of nodes in the set.
+ * @nr_nodes - output parameter, the number of nodes in the set.  Guaranteed
+ *             to be a positive integer!
  */
 typedef int (*get_my_index_f)(int cluster_id, str *capability, int *nr_nodes);
 
@@ -173,7 +178,7 @@ typedef int (*register_capability_f)(str *cap, cl_packet_cb_f packet_cb,
 /*
  * Request to synchronize data for a given capability from another node.
  */
-typedef int (*request_sync_f)(str * capability, int cluster_id, int ignore_seed);
+typedef int (*request_sync_f)(str * capability, int cluster_id);
 /*
  * Returns a BIN packet in which to include a distinct "chunk" of data
  * (e.g. info about a single usrloc contact) to sync.
@@ -181,15 +186,57 @@ typedef int (*request_sync_f)(str * capability, int cluster_id, int ignore_seed)
  * The same packet will be returned multiple times if there is enough space left
  * otherwise, a new packet will be built and the previous one will be sent out.
  *
+ * @data_version: a way for modules to avoid data corruption when receiving
+ *                sync packets from an OpenSIPS running a different version
+ *
  * This function should only be called from the callback for the SYNC_REQ_RCV event.
  */
-typedef bin_packet_t* (*sync_chunk_start_f)(str *capability, int cluster_id, int dst_id);
+typedef bin_packet_t* (*sync_chunk_start_f)(str *capability, int cluster_id,
+                                            int dst_id, short data_version);
 /*
  * Iterate over chunks of data from a received sync packet.
  *
  * Returns 1 if there are any chunks left, and 0 otherwise.
  */
 typedef int (*sync_chunk_iter_f)(bin_packet_t *packet);
+
+/*
+ * Gets the state of a sharing tag by name and cluster ID
+ *
+ * Returns -1 if error or the status of the tag (>=0)
+ */
+typedef int (*shtag_get_f)(str *tag, int cluster_id);
+
+/*
+ * Activates a sharing tag by name and cluster ID
+ *
+ * Returns -1 if error or the new status of the tag (>=0)
+ */
+typedef int (*shtag_activate_f)(str *tag, int cluster_id);
+
+/*
+ * Gets a list with all the active tags from a cluster
+ *
+ * Returns NULL if none or a list of pointers to the tag names
+ */
+typedef str** (*shtag_get_all_active_f)(int cluster_id);
+
+/*
+ * Callback function for monitoring the changes in the state of shtag
+ */
+
+typedef void (*shtag_cb_f)(str *tag_name, int state, int c_id, void *param);
+
+/*
+ * Registers a callback to notify upon changes in a sharing tag state
+ * If the tag_name is NULL or empty, the callback will be triggered for
+ * all the tags in the given cluster. If the cluster ID is negative, the
+ * callback will be triggered for tags in all clusters.
+ *
+ * Returns -1 if error, 0 if success
+ */
+typedef int (*shtag_register_callback_f)(str *tag_name, int c_id,
+		void *param, shtag_cb_f func);
 
 
 struct clusterer_binds {
@@ -209,6 +256,10 @@ struct clusterer_binds {
 	request_sync_f request_sync;
 	sync_chunk_start_f sync_chunk_start;
 	sync_chunk_iter_f sync_chunk_iter;
+	shtag_get_f shtag_get;
+	shtag_activate_f shtag_activate;
+	shtag_get_all_active_f shtag_get_all_active;
+	shtag_register_callback_f shtag_register_callback;
 };
 
 typedef int (*load_clusterer_f)(struct clusterer_binds *binds);
@@ -219,7 +270,7 @@ static inline int load_clusterer_api(struct clusterer_binds *binds) {
 	load_clusterer_f load_clusterer;
 
 	/* import the clusterer auto-loading function */
-	if (!(load_clusterer = (load_clusterer_f) find_export("load_clusterer", 0, 0)))
+	if (!(load_clusterer = (load_clusterer_f) find_export("load_clusterer", 0)))
 		return -1;
 
 	/* let the auto-loading function load all clusterer API functions */

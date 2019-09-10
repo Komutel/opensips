@@ -53,16 +53,16 @@ carrierroute
 
         1.4. Exported Functions
 
-              1.4.1. cr_user_carrier(user, domain, dstavp)
+              1.4.1. cr_user_carrier(user, domain, dst_avp)
               1.4.2. cr_route(carrier, domain, prefix_matching,
-                      rewrite_user, hash_source, dstavp)
+                      rewrite_user, hash_source, [dst_avp])
 
               1.4.3. cr_prime_route(carrier, domain,
                       prefix_matching, rewrite_user, hash_source,
-                      dstavp)
+                      [dst_avp])
 
               1.4.4. cr_next_domain(carrier, domain,
-                      prefix_matching, host, reply_code, dstavp)
+                      prefix_matching, host, reply_code, dst_avp)
 
         1.5. Exported MI Functions
 
@@ -695,31 +695,31 @@ modparam("carrierroute", "failure_comment_column", "description")
    the old semantics can be achieved by using the few new
    functions like this:
 cr_rewrite_uri(domain, hash_source)
--> cr_route("default", domain, "$rU", "$rU", hash_source)
+-> cr_route("default", domain, $rU, $rU, hash_source)
 
 cr_prime_balance_uri(domain, hash_source)
--> cr_prime_route("default", domain, "$rU", "$rU", hash_source)
+-> cr_prime_route("default", domain, $rU, $rU, hash_source)
 
 cr_rewrite_by_to(domain, hash_source)
--> cr_route("default", domain, "$tU", "$rU", hash_source)
+-> cr_route("default", domain, $tU, $rU, hash_source)
 
 cr_prime_balance_by_to(domain, hash_source)
--> cr_prime_route("default", domain, "$tU", "$rU", hash_source)
+-> cr_prime_route("default", domain, $tU, $rU, hash_source)
 
 cr_rewrite_by_from(domain, hash_source)
--> cr_route("default", domain, "$fU", "$rU", hash_source)
+-> cr_route("default", domain, $fU, $rU, hash_source)
 
 cr_prime_balance_by_from(domain, hash_source)
--> cr_prime_route("default", domain, "$fU", "$rU", hash_source)
+-> cr_prime_route("default", domain, $fU, $rU, hash_source)
 
 cr_user_rewrite_uri(uri, domain)
--> cr_user_carrier(user, domain, "$avp(tree_avp)")
--> cr_route("$avp(tree_avp)", domain, "$rU", "$rU", "call_id")
+-> cr_user_carrier(user, domain, $avp(tree_avp))
+-> cr_route($avp(tree_avp), domain, $rU, $rU, "call_id")
 
 cr_tree_rewrite_uri(tree, domain)
--> cr_route(tree, domain, "$rU", "$rU", "call_id")
+-> cr_route(tree, domain, $rU, $rU, "call_id")
 
-1.4.1.  cr_user_carrier(user, domain, dstavp)
+1.4.1.  cr_user_carrier(user, domain, dst_avp)
 
    This function loads the carrier and stores it in an AVP. It
    cannot be used in the config file mode, as it needs a mapping
@@ -730,16 +730,15 @@ cr_tree_rewrite_uri(tree, domain)
    that means for every execution of this function a database
    query will be done.
 
-   Meaning of the parameters is as follows:
-     * user - Name of the user for the carrier tree lookup.
-       Additional to a string any pseudo-variable could be used as
-       input.
-     * domain - Name of the routing domain to be used. Additional
-       to a string any pseudo-variable could be used as input.
-     * dstavp - Name of the AVP where to store the carrier id.
+   Parameters:
+     * user (string) - Name of the user for the carrier tree
+       lookup
+     * domain (string) - Name of the routing domain to be used
+     * dst_avp (var) - Name of an AVP where to store the carrier
+       id
 
 1.4.2.  cr_route(carrier, domain, prefix_matching, rewrite_user,
-hash_source, dstavp)
+hash_source, [dst_avp])
 
    This function searches for the longest match for the user given
    in prefix_matching at the given domain in the given carrier
@@ -752,28 +751,24 @@ hash_source, dstavp)
    valid numerical only string. It uses the standard crc32
    algorithm to calculate the hash values.
 
-   Meaning of the parameters is as follows:
-     * carrier - The routing tree to be used. Additional to a
-       string any pseudo-variable could be used as input.
-     * domain - Name of the routing domain to be used. Additional
-       to a string any pseudo-variable could be used as input.
-     * prefix_matching - User name to be used for prefix matching
-       in the routing tree. Additional to a string any
-       pseudo-variable could be used as input.
-     * rewrite_user - The user name to be used for applying the
-       rewriting rule. Usually this is the user part of the
-       request URI. Additional to a string any pseudo-variable
-       could be used as input.
-     * hash_source - The hash values of the destination set must
-       be a contiguous range starting at 1, limited by the
-       configuration parameter max_targets. Possible values for
-       hash_source are: call_id, from_uri, from_user, to_uri and
-       to_user.
-     * dstavp - Name of the AVP where to store the rewritten host.
-       This parameter is optional.
+   Parameters:
+     * carrier (string) - The routing tree to be used
+     * domain (string) - Name of the routing domain to be used
+     * prefix_matching (string) - User name to be used for prefix
+       matching in the routing tree
+     * rewrite_user (string) - The user name to be used for
+       applying the rewriting rule. Usually, this is the user part
+       of the request URI
+     * hash_source (string) - The hash values of the destination
+       set must be a contiguous range starting at 1, limited by
+       the configuration parameter max_targets. Possible values
+       for hash_source are: call_id, from_uri, from_user, to_uri
+       and to_user.
+     * dst_avp (var, optional) - Optional AVP where to store the
+       rewritten host
 
 1.4.3.  cr_prime_route(carrier, domain, prefix_matching,
-rewrite_user, hash_source, dstavp)
+rewrite_user, hash_source, [dst_avp])
 
    This function searches for the longest match for the user given
    in prefix_matching at the given domain in the given carrier
@@ -787,27 +782,23 @@ rewrite_user, hash_source, dstavp)
    to calculate the hash values.
 
    Meaning of the parameters is as follows:
-     * carrier - The routing tree to be used. Additional to a
-       string any pseudo-variable could be used as input.
-     * domain - Name of the routing domain to be used. Additional
-       to a string any pseudo-variable could be used as input.
-     * prefix_matching - User name to be used for prefix matching
-       in the routing tree. Additional to a string any
-       pseudo-variable could be used as input.
-     * rewrite_user - The user name to be used for applying the
-       rewriting rule. Usually this is the user part of the
-       request URI. Additional to a string any pseudo-variable
-       could be used as input.
-     * hash_source - The hash values of the destination set must
-       be a contiguous range starting at 1, limited by the
-       configuration parameter max_targets. Possible values for
-       hash_source are: call_id, from_uri, from_user, to_uri and
-       to_user.
-     * dstavp - Name of the AVP where to store the rewritten host.
-       This parameter is optional.
+     * carrier (string) - The routing tree to be used
+     * domain (string) - Name of the routing domain to be used
+     * prefix_matching (string) - User name to be used for prefix
+       matching in the routing tree
+     * rewrite_user (string) - The user name to be used for
+       applying the rewriting rule. Usually, this is the user part
+       of the request URI
+     * hash_source (string) - The hash values of the destination
+       set must be a contiguous range starting at 1, limited by
+       the configuration parameter max_targets. Possible values
+       for hash_source are: call_id, from_uri, from_user, to_uri
+       and to_user.
+     * dst_avp (var, optional) - Optional AVP where to store the
+       rewritten host
 
 1.4.4.  cr_next_domain(carrier, domain, prefix_matching, host,
-reply_code, dstavp)
+reply_code, dst_avp)
 
    This function searches for the longest match for the user given
    in prefix_matching at the given domain in the given carrier
@@ -821,22 +812,17 @@ reply_code, dstavp)
    with prefix_matching containing a valid numerical only string.
 
    Meaning of the parameters is as follows:
-     * carrier - The routing tree to be used. Additional to a
-       string any pseudo-variable could be used as input.
-     * domain - Name of the routing domain to be used. Additional
-       to a string any pseudo-variable could be used as input.
-     * prefix_matching - User name to be used for prefix matching
-       in the routing tree. Additional to a string any
+     * carrier (string) - The routing tree to be used any
        pseudo-variable could be used as input.
-     * host - The host name to be used for failure route rule
-       matching. Usually this is the last tried routing
-       destination stored in an avp by cr_route. Additional to a
-       string any pseudo-variable could be used as input.
-     * reply_code - The reply code to be used for failure route
-       rule matching. Additional to a string any pseudo-variable
-       could be used as input.
-     * dstavp - Name of the AVP where to store the next routing
-       domain.
+     * domain (string) - Name of the routing domain to be used
+     * prefix_matching (string) - User name to be used for prefix
+       matching in the routing tree
+     * host (string) - The host name to be used for failure route
+       rule matching. Usually, this is the last tried routing
+       destination stored in an avp by cr_route
+     * reply_code (string) - The reply code to be used for failure
+       route rule matching
+     * dst_avp (var) - AVP where to store the next routing domain.
 
 1.5. Exported MI Functions
 
@@ -875,7 +861,7 @@ reply_code, dstavp)
 
    Example 1.38. cr_replace_host usage
 ...
-opensipsctl fifo cr_replace_host "-d proxy -p 49 -h proxy1 -t proxy2"
+opensips-cli -x mi cr_replace_host "-d proxy -p 49 -h proxy1 -t proxy2"
 ...
 
 1.5.4. cr_deactivate_host
@@ -897,7 +883,7 @@ opensipsctl fifo cr_replace_host "-d proxy -p 49 -h proxy1 -t proxy2"
 
    Example 1.39. cr_deactivate_host usage
 ...
-opensipsctl fifo cr_deactivate_host "-d proxy -p 49 -h proxy1"
+opensips-cli -x mi cr_deactivate_host "-d proxy -p 49 -h proxy1"
 ...
 
 1.5.5. cr_activate_host
@@ -913,7 +899,7 @@ opensipsctl fifo cr_deactivate_host "-d proxy -p 49 -h proxy1"
 
    Example 1.40. cr_activate_host usage
 ...
-opensipsctl fifo cr_activate_host "-d proxy -p 49 -h proxy1"
+opensips-cli -x mi cr_activate_host "-d proxy -p 49 -h proxy1"
 ...
 
 1.5.6. cr_add_host
@@ -933,7 +919,7 @@ opensipsctl fifo cr_activate_host "-d proxy -p 49 -h proxy1"
 
    Example 1.41. cr_add_host usage
 ...
-opensipsctl fifo cr_add_host "-d proxy -p 49 -h proxy1 -w 0.25"
+opensips-cli -x mi cr_add_host "-d proxy -p 49 -h proxy1 -w 0.25"
 ...
 
 1.5.7. cr_delete_host
@@ -954,7 +940,7 @@ opensipsctl fifo cr_add_host "-d proxy -p 49 -h proxy1 -w 0.25"
 
    Example 1.42. cr_delete_host usage
 ...
-opensipsctl fifo cr_delete_host "-d proxy -p 49 -h proxy1 -w 0.25"
+opensips-cli -x mi cr_delete_host "-d proxy -p 49 -h proxy1 -w 0.25"
 ...
 
 1.6. Examples
@@ -1237,18 +1223,18 @@ Chapter 2. Contributors
    1. Henning Westerholt (@henningw) 126 80 2085 1607
    2. Hardy Kahl 50 3 2713 1360
    3. Jonas Appel 50 1 6240 0
-   4. Bogdan-Andrei Iancu (@bogdan-iancu) 28 23 129 153
-   5. Razvan Crainea (@razvancrainea) 15 12 82 74
-   6. Liviu Chircu (@liviuchircu) 14 10 73 133
-   7. Daniel-Constantin Mierla (@miconda) 9 7 34 30
-   8. Carsten Bock 3 1 64 15
-   9. Bob Atkins 3 1 29 1
-   10. Julián Moreno Patiño 3 1 24 24
+   4. Bogdan-Andrei Iancu (@bogdan-iancu) 29 24 131 154
+   5. Vlad Patrascu (@rvlad-patrascu) 23 5 384 764
+   6. Razvan Crainea (@razvancrainea) 19 16 94 102
+   7. Liviu Chircu (@liviuchircu) 17 11 132 206
+   8. Daniel-Constantin Mierla (@miconda) 9 7 34 30
+   9. Carsten Bock 3 1 64 15
+   10. Bob Atkins 3 1 29 1
 
-   All remaining contributors: Ovidiu Sas (@ovidiusas), Sergio
-   Gutierrez, Iouri Kharon, UnixDev, Peter Lemenkov (@lemenkov),
-   Walter Doekes (@wdoekes), Edson Gellert Schubert, Vlad Patrascu
-   (@rvlad-patrascu).
+   All remaining contributors: Julián Moreno Patiño, Ovidiu Sas
+   (@ovidiusas), Sergio Gutierrez, Iouri Kharon, UnixDev, Peter
+   Lemenkov (@lemenkov), Walter Doekes (@wdoekes), Edson Gellert
+   Schubert.
 
    (1) DevScore = author_commits + author_lines_added /
    (project_lines_added / project_commits) + author_lines_deleted
@@ -1270,12 +1256,12 @@ Chapter 2. Contributors
 
    Table 2.2. Most recently active contributors^(1) to this module
                       Name                   Commit Activity
-   1.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
-   2.  Liviu Chircu (@liviuchircu)         Mar 2014 - Jun 2018
-   3.  Vlad Patrascu (@rvlad-patrascu)     May 2017 - May 2017
-   4.  Razvan Crainea (@razvancrainea)     Jun 2011 - Mar 2017
-   5.  Julián Moreno Patiño                Feb 2016 - Feb 2016
-   6.  Bogdan-Andrei Iancu (@bogdan-iancu) Dec 2007 - Oct 2014
+   1.  Razvan Crainea (@razvancrainea)     Jun 2011 - Aug 2019
+   2.  Vlad Patrascu (@rvlad-patrascu)     May 2017 - Jul 2019
+   3.  Liviu Chircu (@liviuchircu)         Mar 2014 - Apr 2019
+   4.  Bogdan-Andrei Iancu (@bogdan-iancu) Dec 2007 - Apr 2019
+   5.  Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
+   6.  Julián Moreno Patiño                Feb 2016 - Feb 2016
    7.  Walter Doekes (@wdoekes)            May 2014 - May 2014
    8.  Ovidiu Sas (@ovidiusas)             Jan 2013 - Jan 2013
    9.  UnixDev                             Feb 2009 - Feb 2009
@@ -1292,12 +1278,11 @@ Chapter 3. Documentation
 
 3.1. Contributors
 
-   Last edited by: Peter Lemenkov (@lemenkov), Liviu Chircu
-   (@liviuchircu), Julián Moreno Patiño, Bogdan-Andrei Iancu
-   (@bogdan-iancu), Razvan Crainea (@razvancrainea), Henning
-   Westerholt (@henningw), Iouri Kharon, Hardy Kahl,
-   Daniel-Constantin Mierla (@miconda), Edson Gellert Schubert,
-   Carsten Bock, Jonas Appel.
+   Last edited by: Liviu Chircu (@liviuchircu), Razvan Crainea
+   (@razvancrainea), Peter Lemenkov (@lemenkov), Julián Moreno
+   Patiño, Bogdan-Andrei Iancu (@bogdan-iancu), Henning Westerholt
+   (@henningw), Iouri Kharon, Hardy Kahl, Daniel-Constantin Mierla
+   (@miconda), Edson Gellert Schubert, Carsten Bock, Jonas Appel.
 
    Documentation Copyrights:
 

@@ -309,11 +309,6 @@ static str * get_rl_algo_name(rl_algo_t algo)
 	return NULL;
 }
 
-int w_rl_check_2(struct sip_msg *_m, char *_n, char *_l)
-{
-	return w_rl_check_3(_m, _n, _l, NULL);
-}
-
 rl_pipe_t *rl_create_pipe(int limit, rl_algo_t algo)
 {
 	rl_pipe_t *pipe;
@@ -343,32 +338,15 @@ rl_pipe_t *rl_create_pipe(int limit, rl_algo_t algo)
 	return pipe;
 }
 
-int w_rl_check_3(struct sip_msg *_m, char *_n, char *_l, char *_a)
+int w_rl_check(struct sip_msg *_m, str *name, int *limit, str *algorithm)
 {
-	str name;
-	int limit = 0, ret = 1, should_update = 0;
-	str algorithm;
+	int ret = 1, should_update = 0;
 	unsigned int hash_idx;
 	rl_pipe_t **pipe;
 
 	rl_algo_t algo = -1;
 
-	/* retrieve and check parameters */
-	if (!_n || !_l) {
-		LM_ERR("invalid parameters\n");
-		goto end;
-	}
-	if (fixup_get_svalue(_m, (gparam_p) _n, &name) < 0) {
-		LM_ERR("cannot retrieve identifier\n");
-		goto end;
-	}
-	if (fixup_get_ivalue(_m, (gparam_p) _l, &limit) < 0) {
-		LM_ERR("cannot retrieve limit\n");
-		goto end;
-	}
-	algorithm.s = 0;
-	if (!_a || fixup_get_svalue(_m, (gparam_p) _a, &algorithm) < 0 ||
-		(algo = get_rl_algo(algorithm)) == PIPE_ALGO_NOP) {
+	if (!algorithm || (algo = get_rl_algo(*algorithm)) == PIPE_ALGO_NOP) {
 		algo = PIPE_ALGO_NOP;
 	}
 
@@ -376,30 +354,30 @@ int w_rl_check_3(struct sip_msg *_m, char *_n, char *_l, char *_a)
 	if (algo == PIPE_ALGO_FEEDBACK) {
 		lock_get(rl_lock);
 		if (*rl_feedback_limit) {
-			if (*rl_feedback_limit != limit) {
+			if (*rl_feedback_limit != *limit) {
 				LM_WARN("FEEDBACK limit should be the same for all pipes, but"
 					" new limit %d differs - setting to %d\n",
-					limit, *rl_feedback_limit);
-				limit = *rl_feedback_limit;
+					*limit, *rl_feedback_limit);
+				*limit = *rl_feedback_limit;
 			}
 		} else {
-			if (limit <= 0 || limit >= 100) {
+			if (*limit <= 0 || *limit >= 100) {
 				LM_ERR("invalid limit for FEEDBACK algorithm "
 					"(must be between 0 and 100)\n");
 				lock_release(rl_lock);
 				goto end;
 			}
-			*rl_feedback_limit = limit;
-			pid_setpoint_limit(limit);
+			*rl_feedback_limit = *limit;
+			pid_setpoint_limit(*limit);
 		}
 		lock_release(rl_lock);
 	}
 
-	hash_idx = RL_GET_INDEX(name);
+	hash_idx = RL_GET_INDEX(*name);
 	RL_GET_LOCK(hash_idx);
 
 	/* try to get the value */
-	pipe = RL_GET_PIPE(hash_idx, name);
+	pipe = RL_GET_PIPE(hash_idx, *name);
 	if (!pipe) {
 		LM_ERR("cannot get the index\n");
 		goto release;
@@ -407,29 +385,29 @@ int w_rl_check_3(struct sip_msg *_m, char *_n, char *_l, char *_a)
 
 	if (!*pipe) {
 		/* allocate new pipe */
-		if (!(*pipe = rl_create_pipe(limit, algo)))
+		if (!(*pipe = rl_create_pipe(*limit, algo)))
 			goto release;
 
 		LM_DBG("Pipe %.*s doesn't exist, but was created %p\n",
-				name.len, name.s, *pipe);
+				name->len, name->s, *pipe);
 		if ((*pipe)->algo == PIPE_ALGO_NETWORK)
 			should_update = 1;
 	} else {
 		LM_DBG("Pipe %.*s found: %p - last used %lu\n",
-			name.len, name.s, *pipe, (*pipe)->last_used);
+			name->len, name->s, *pipe, (*pipe)->last_used);
 		if (algo != PIPE_ALGO_NOP && (*pipe)->algo != algo) {
 			LM_WARN("algorithm %d different from the initial one %d for pipe "
-				"%.*s", algo, (*pipe)->algo, name.len, name.s);
+				"%.*s", algo, (*pipe)->algo, name->len, name->s);
 		}
 		/* update the limit */
-		(*pipe)->limit = limit;
+		(*pipe)->limit = *limit;
 	}
 
 	/* set the last used time */
 	(*pipe)->last_used = time(0);
 	if (RL_USE_CDB(*pipe)) {
 		/* release the counter for a while */
-		if (rl_change_counter(&name, *pipe, 1) < 0) {
+		if (rl_change_counter(name, *pipe, 1) < 0) {
 			LM_ERR("cannot increase counter\n");
 			goto release;
 		}
@@ -439,7 +417,7 @@ int w_rl_check_3(struct sip_msg *_m, char *_n, char *_l, char *_a)
 
 	ret = rl_pipe_check(*pipe);
 	LM_DBG("Pipe %.*s counter:%d load:%d limit:%d should %sbe blocked (%p)\n",
-		name.len, name.s, (*pipe)->counter, (*pipe)->load,
+		name->len, name->s, (*pipe)->counter, (*pipe)->load,
 		(*pipe)->limit, ret == 1 ? "NOT " : "", *pipe);
 
 
@@ -561,34 +539,20 @@ next_map:
 	}
 }
 
-struct rl_param_t {
-	int counter;
-	struct mi_node * node;
-	struct mi_root * root;
-};
-
 static int rl_map_print(void *param, str key, void *value)
 {
-	struct mi_attr* attr;
-	char* p;
-	int len;
-	struct rl_param_t * rl_param = (struct rl_param_t *) param;
-	struct mi_node * rpl;
 	rl_pipe_t *pipe = (rl_pipe_t *) value;
-	struct mi_node * node;
 	str *alg;
+	mi_item_t *pipe_item = (mi_item_t *)param;
 
 	if (!pipe) {
 		LM_ERR("invalid pipe value\n");
 		return -1;
 	}
-
-	if (!rl_param || !rl_param->node || !rl_param->root) {
-		LM_ERR("no reply node\n");
+	if (!pipe_item) {
+		LM_ERR("no mi item\n");
 		return -1;
 	}
-	rpl = rl_param->node;
-
 	if (!key.len || !key.s) {
 		LM_ERR("no key found\n");
 		return -1;
@@ -598,10 +562,7 @@ static int rl_map_print(void *param, str key, void *value)
 	if (pipe->algo == PIPE_ALGO_NOP)
 		return 0;
 
-	if (!(node = add_mi_node_child(rpl, 0, "PIPE", 4, 0, 0)))
-		return -1;
-
-	if (!(attr = add_mi_attr(node, MI_DUP_VALUE, "id", 2, key.s, key.len)))
+	if (add_mi_string(pipe_item, MI_SSTR("id"), key.s, key.len) < 0)
 		return -1;
 
 	if (!(alg = get_rl_algo_name(pipe->algo))) {
@@ -609,36 +570,23 @@ static int rl_map_print(void *param, str key, void *value)
 		return -1;
 	}
 
-	if (!(attr = add_mi_attr(node, MI_DUP_VALUE, "algorithm", 9,
-		alg->s, alg->len)))
+	if (add_mi_string(pipe_item, MI_SSTR("algorithm"), alg->s, alg->len) < 0)
 		return -1;
 
-
-	p = int2str((unsigned long) (pipe->limit), &len);
-	if (!(attr = add_mi_attr(node, MI_DUP_VALUE, "limit", 5, p, len)))
+	if (add_mi_number(pipe_item, MI_SSTR("limit"), pipe->limit) < 0)
 		return -1;
 
-	p = int2str((unsigned long)(pipe->last_counter), &len);
-	if (!(attr = add_mi_attr(node, MI_DUP_VALUE, "counter", 7, p, len)))
+	if (add_mi_number(pipe_item, MI_SSTR("counter"), pipe->last_counter) < 0)
 		return -1;
-
-	if ((++rl_param->counter % 50) == 0) {
-		LM_DBG("flush mi tree - number %d\n", rl_param->counter);
-		flush_mi_tree(rl_param->root);
-	}
 
 	return 0;
 }
 
-int rl_stats(struct mi_root *rpl_tree, str * value)
+int rl_stats(mi_item_t *resp_obj, str * value)
 {
+	mi_item_t *pipe_item, *pipe_arr;
 	rl_pipe_t **pipe;
-	struct rl_param_t param;
 	int i;
-
-	memset(&param, 0, sizeof(struct rl_param_t));
-	param.node = &rpl_tree->node;
-	param.root = rpl_tree;
 
 	if (value && value->s && value->len) {
 		i = RL_GET_INDEX(*value);
@@ -648,7 +596,10 @@ int rl_stats(struct mi_root *rpl_tree, str * value)
 			LM_DBG("pipe %.*s not found\n", value->len, value->s);
 			goto error;
 		}
-		if (rl_map_print(&param, *value, *pipe)) {
+		pipe_item = add_mi_object(resp_obj, MI_SSTR("Pipe"));
+		if (!pipe_item)
+			goto error;
+		if (rl_map_print(pipe_item, *value, *pipe)) {
 			LM_ERR("cannot print value for key %.*s\n",
 				value->len, value->s);
 			goto error;
@@ -656,9 +607,15 @@ int rl_stats(struct mi_root *rpl_tree, str * value)
 		RL_RELEASE_LOCK(i);
 	} else {
 		/* iterate through each map */
+		pipe_arr = add_mi_array(resp_obj, MI_SSTR("Pipes"));
+		if (!pipe_arr)
+			return -1;
 		for (i = 0; i < rl_htable.size; i++) {
+			pipe_item = add_mi_object(pipe_arr, NULL, 0);
+			if (!pipe_item)
+				return -1;
 			RL_GET_LOCK(i);
-			if (map_for_each(rl_htable.maps[i], rl_map_print, &param)) {
+			if (map_for_each(rl_htable.maps[i], rl_map_print, pipe_item)) {
 				LM_ERR("cannot print values\n");
 				goto error;
 			}
@@ -668,51 +625,6 @@ int rl_stats(struct mi_root *rpl_tree, str * value)
 	return 0;
 error:
 	RL_RELEASE_LOCK(i);
-	return -1;
-}
-
-int rl_bin_status(struct mi_node *root, int cluster_id, char *type, int type_len)
-{
-	clusterer_node_t *cl_nodes = NULL, *it;
-	struct mi_node *node = NULL;
-	struct mi_attr* attr;
-	str val;
-
-	cl_nodes = clusterer_api.get_nodes(cluster_id);
-	for (it = cl_nodes; it; it = it->next) {
-		val.s = int2str(it->node_id, &val.len);
-		node = add_mi_node_child(root, MI_DUP_VALUE, MI_SSTR("Node"),
-			val.s, val.len);
-		if (!node)
-			goto error;
-
-		val.s = int2str(cluster_id, &val.len);
-		attr = add_mi_attr(node, MI_DUP_VALUE, MI_SSTR("Cluster_ID"),
-				val.s, val.len);
-		if (!attr)
-			goto error;
-
-		if (it->description.s)
-			attr = add_mi_attr(node, MI_DUP_VALUE, MI_SSTR("Description"),
-					it->description.s, it->description.len);
-		else
-			attr = add_mi_attr(node, MI_DUP_VALUE, MI_SSTR("Description"),
-					"none", 4);
-		if (!attr)
-			goto error;
-
-		attr = add_mi_attr(node, MI_DUP_VALUE, MI_SSTR("Type"), type, type_len);
-		if (!attr)
-			goto error;
-	}
-
-	if (cl_nodes)
-		clusterer_api.free_nodes(cl_nodes);	
-
-	return 0;
-
-error:
-	clusterer_api.free_nodes(cl_nodes);
 	return -1;
 }
 
@@ -757,27 +669,21 @@ release:
 	return ret;
 }
 
-static inline int w_rl_change_counter(struct sip_msg *_m, char *_n, int dec)
+static inline int w_rl_change_counter(struct sip_msg *_m, str *name, int dec)
 {
-	str name;
-
-	if (!_n || fixup_get_svalue(_m, (gparam_p) _n, &name) < 0) {
-		LM_ERR("cannot retrieve identifier\n");
-		return -1;
-	}
-	if (w_rl_set_count(name, dec)) {
-		LM_ERR("cannot find any pipe named %.*s\n", name.len, name.s);
+	if (w_rl_set_count(*name, dec)) {
+		LM_ERR("cannot find any pipe named %.*s\n", name->len, name->s);
 		return -1;
 	}
 	return 1;
 }
 
-int w_rl_dec(struct sip_msg *_m, char *_n)
+int w_rl_dec(struct sip_msg *_m, str *_n)
 {
 	return w_rl_change_counter(_m, _n, -1);
 }
 
-int w_rl_reset(struct sip_msg *_m, char *_n)
+int w_rl_reset(struct sip_msg *_m, str *_n)
 {
 	return w_rl_change_counter(_m, _n, 0);
 }

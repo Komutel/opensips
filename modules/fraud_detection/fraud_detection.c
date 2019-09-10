@@ -79,15 +79,19 @@ static int mod_init(void);
 static int child_init(int);
 static void destroy(void);
 
-static int check_fraud(struct sip_msg *msg, char *user, char *number, char *pid);
-static int fixup_check_fraud(void **param, int param_no);
-static struct mi_root* mi_show_stats(struct mi_root *cmd_tree, void *param);
-static struct mi_root* mi_reload(struct mi_root *cmd_tree, void *param);
+static int check_fraud(struct sip_msg *msg, str *user, str *number, int *pid);
+mi_response_t *mi_show_stats(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_reload(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
 static cmd_export_t cmds[]={
-	{"check_fraud", (cmd_function)check_fraud, 3, fixup_check_fraud, 0,
+	{"check_fraud", (cmd_function)check_fraud, {
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE | ONREPLY_ROUTE},
-	{0,0,0,0,0,0}
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t params[]={
@@ -114,11 +118,15 @@ static param_export_t params[]={
 };
 
 static mi_export_t mi_cmds[] = {
-	//{ "get_maps","return all mappings",mi_get_maps,MI_NO_INPUT_FLAG,0,0},
-	{"show_fraud_stats", "print current stats for a particular user",
-		mi_show_stats, 0, 0, 0},
-	{"fraud_reload", "reload fraud profiles from db", mi_reload, 0, 0, 0},
-	{0,0,0,0,0,0}
+	{ "show_fraud_stats", "print current stats for a particular user", 0, 0, {
+		{mi_show_stats, {"user", "prefix", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ "fraud_reload", "reload fraud profiles from db", 0, 0, {
+		{mi_reload, {0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 static dep_export_t deps = {
@@ -139,7 +147,9 @@ struct module_exports exports= {
 	MOD_TYPE_DEFAULT,
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS,            /* dlopen flags */
+	0,				            /* load function */
 	&deps,
+	0,                          /* OpenSIPS dependencies function */
 	cmds,                       /* exported functions */
 	0,                          /* exported async functions */
 	params,                     /* exported parameters */
@@ -151,7 +161,8 @@ struct module_exports exports= {
 	mod_init,                   /* module initialization function */
 	(response_function) 0,      /* response handling function */
 	(destroy_function)destroy,  /* destroy function */
-	child_init                  /* per-child init function */
+	child_init,                 /* per-child init function */
+	0                           /* reload confirm function */
 };
 
 
@@ -253,30 +264,11 @@ static void destroy(void)
 	frd_destroy_data();
 }
 
-static int fixup_check_fraud(void **param, int param_no)
-{
-	switch (param_no) {
-
-		case 1:
-		case 2:
-			return fixup_spve(param);
-
-		case 3:
-			return fixup_igp(param);
-
-		default:
-			LM_CRIT ("Too many parameters for check_fraud\n");
-			return -1;
-	}
-}
-
-static int check_fraud(struct sip_msg *msg, char *_user, char *_number, char *_pid)
+static int check_fraud(struct sip_msg *msg, str *user, str *number, int *pid)
 {
 
 	static const int rc_error = -3, rc_critical_thr = -2, rc_warning_thr = -1,
 				 rc_ok_thr = 1, rc_no_rule = 2;
-	str user, number;
-	unsigned int pid;
 	frd_dlg_param *param;
 	extern unsigned int frd_data_rev;
 	int rc = rc_ok_thr;
@@ -287,41 +279,26 @@ static int check_fraud(struct sip_msg *msg, char *_user, char *_number, char *_p
 		return rc_ok_thr;
 	}
 
-	/* Get the actual params */
-
-	if (fixup_get_svalue(msg, (gparam_p) _user, &user) != 0) {
-		LM_ERR("Cannot get user value\n");
-		return rc_error;
-	}
-	if (fixup_get_svalue(msg, (gparam_p) _number, &number) != 0) {
-		LM_ERR("Cannot get number value\n");
-		return rc_error;
-	}
-	if (fixup_get_ivalue(msg, (gparam_p)_pid, (int*)&pid) != 0) {
-		LM_ERR("Cannot get the profile-id value\n");
-		return rc_error;
-	}
-
 	/* Find a rule */
 
 	unsigned int matched_len;
 	lock_start_read(frd_data_lock);
-	rt_info_t *rule = drb.match_number(*dr_head, pid, &number, &matched_len);
+	rt_info_t *rule = drb.match_number(*dr_head, *pid, number, &matched_len);
 
 	if (rule == NULL) {
 		/* No match */
 		LM_DBG("No rule matched for number=<%.*s>, pid=<%d>\n",
-				number.len, number.s, pid);
+				number->len, number->s, *pid);
 
 		lock_stop_read(frd_data_lock);
 		return rc_no_rule;
 	}
 
 	/* We matched a rule */
-	str prefix = number;
+	str prefix = *number;
 	prefix.len = matched_len;
 	str shm_user;
-	frd_stats_entry_t *se = get_stats(user, prefix, &shm_user);
+	frd_stats_entry_t *se = get_stats(*user, prefix, &shm_user);
 	if (!se) {
 		rc = rc_error;
 		goto out;
@@ -354,7 +331,7 @@ static int check_fraud(struct sip_msg *msg, char *_user, char *_number, char *_p
 
 	lock_get(frd_seq_calls_lock);
 	if (se->stats.last_called_prefix.len == matched_len &&
-			memcmp(se->stats.last_called_prefix.s, number.s, matched_len) == 0) {
+			memcmp(se->stats.last_called_prefix.s, number->s, matched_len) == 0) {
 
 		/* We have called the same number last time */
 		++se->stats.seq_calls;
@@ -364,7 +341,7 @@ static int check_fraud(struct sip_msg *msg, char *_user, char *_number, char *_p
 			LM_ERR("oom\n");
 			return rc_error;
 		}
-		memcpy(se->stats.last_called_prefix.s, number.s, matched_len);
+		memcpy(se->stats.last_called_prefix.s, number->s, matched_len);
 		se->stats.seq_calls = 1;
 	}
 	lock_release(frd_seq_calls_lock);
@@ -415,7 +392,7 @@ static int check_fraud(struct sip_msg *msg, char *_user, char *_number, char *_p
 #define CHECK_AND_RAISE(pname, type) \
 	(se->stats.pname >= thr->pname ## _thr.type) { \
 		raise_ ## type ## _event(&pname ## _name, &se->stats.pname,\
-				&thr->pname ## _thr.type, &user, &number, &rule->id);\
+				&thr->pname ## _thr.type, user, number, &rule->id);\
 		rc = rc_ ## type ## _thr;\
 	}
 
@@ -448,9 +425,9 @@ static int check_fraud(struct sip_msg *msg, char *_user, char *_number, char *_p
 
 	param = shm_malloc(sizeof(frd_dlg_param));
 	if (!param) {
-		LM_ERR("no more shm memory");
+		LM_ERR("no more shm memory\n");
 		rc = rc_error;
-	} else if (shm_str_dup(&param->number, &number) == 0) {
+	} else if (shm_str_dup(&param->number, number) == 0) {
 		param->stats = se;
 		param->thr = thr;
 		param->user = shm_user;
@@ -472,88 +449,67 @@ out:
 	return rc;
 }
 
-static struct mi_root* mi_show_stats(struct mi_root *cmd_tree, void *param)
+mi_response_t *mi_show_stats(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
-	/* User, number, pid */
-
-	struct mi_node *node = cmd_tree->node.kids;
+	mi_response_t *resp;
+	mi_item_t *resp_obj;
 	str user, prefix;
-	unsigned int pid;
 
-	if (node == NULL)
-		return init_mi_tree(400, MI_MISSING_PARM_S, MI_MISSING_PARM_LEN);
-
-	user = node->value;
-	node = node->next;
-
-	if (node == NULL)
-		return init_mi_tree(400, MI_MISSING_PARM_S, MI_MISSING_PARM_LEN);
-
-	prefix = node->value;
-	node = node->next;
-
-	if (node == NULL)
-		return init_mi_tree(400, MI_MISSING_PARM_S, MI_MISSING_PARM_LEN);
-
-	if (str2int(&node->value, &pid) != 0) {
-		LM_WARN("Wrong value for profile id. Token <%.*s>\n", node->value.len,
-				node->value.s);
-		return init_mi_tree(400, MI_BAD_PARM_S, MI_BAD_PARM_LEN);
-	}
+	if (get_mi_string_param(params, "user", &user.s, &user.len) < 0)
+		return init_mi_param_error();
+	if (get_mi_string_param(params, "prefix", &prefix.s, &prefix.len) < 0)
+		return init_mi_param_error();
 
 	if (!stats_exist(user, prefix)) {
 		LM_WARN("There is no data for user<%.*s> and prefix=<%.*s>\n",
 				user.len, user.s, prefix.len, prefix.s);
-		return init_mi_tree(400, MI_BAD_PARM_S, MI_BAD_PARM_LEN);
+		return init_mi_error(400, MI_SSTR("Bad parameter value"));
 	}
-
-
-	struct mi_root* rpl_tree = init_mi_tree(200, MI_OK_S, MI_OK_LEN);
-	if (rpl_tree == NULL)
-		return 0;
-	rpl_tree->node.flags |= MI_IS_ARRAY;
 
 	frd_stats_entry_t *se = get_stats(user, prefix, NULL);
 	if (!se) {
 		LM_ERR("oom\n");
-		return init_mi_tree(500, MI_SSTR(MI_INTERNAL_ERR_S));
+		return init_mi_error(500, MI_SSTR("Internal error"));
 	}
+
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
+		return 0;
 
 	lock_get(&se->lock);
 
-#define ADD_STAT_CHILD(pname, pval) do {\
-	int val_len;\
-	char *cval = int2str(pval, &val_len);\
-	if (add_mi_node_child(&rpl_tree->node, MI_DUP_VALUE,\
-			pname ## _name.s, pname ## _name.len, cval, val_len) == 0)\
-		goto add_error;\
-} while (0)
-
-	ADD_STAT_CHILD(cpm, se->stats.cpm);
-	ADD_STAT_CHILD(total_calls, se->stats.total_calls);
-	ADD_STAT_CHILD(concurrent_calls, se->stats.concurrent_calls);
-	ADD_STAT_CHILD(seq_calls, se->stats.seq_calls);
-
-#undef ADD_STAT_CHILD
+	if (add_mi_number(resp_obj, MI_SSTR("cpm"), se->stats.cpm) < 0)
+		goto add_error;
+	if (add_mi_number(resp_obj, MI_SSTR("total_calls"),
+		se->stats.total_calls) < 0)
+		goto add_error;
+	if (add_mi_number(resp_obj, MI_SSTR("concurrent_calls"),
+		se->stats.concurrent_calls) < 0)
+		goto add_error;
+	if (add_mi_number(resp_obj, MI_SSTR("seq_calls"), se->stats.seq_calls) < 0)
+		goto add_error;
 
 	lock_release(&se->lock);
-	return rpl_tree;
+
+	return resp;
 
 add_error:
 	lock_release(&se->lock);
 	LM_ERR("failed to add node\n");
-	free_mi_tree(rpl_tree);
+	free_mi_response(resp);
 	return 0;
 }
 
-static struct mi_root* mi_reload(struct mi_root *cmd_tree, void *param)
+mi_response_t *mi_reload(const mi_params_t *params,
+								struct mi_handler *async_hdl)
 {
 	if (frd_connect_db() != 0 || frd_reload_data() != 0) {
 			LM_ERR ("cannot load data from db\n");
-			return init_mi_tree(500, MI_INTERNAL_ERR_S, MI_INTERNAL_ERR_LEN);
+			return init_mi_error(500, MI_SSTR("Internal error"));
 	}
 	else {
 		frd_disconnect_db();
-		return init_mi_tree(200, MI_OK_S, MI_OK_LEN);
+		return init_mi_result_ok();
 	}
 }

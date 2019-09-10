@@ -30,6 +30,9 @@
 struct dlg_binds cgr_dlgb;
 struct tm_binds cgr_tmb;
 
+gen_lock_t *cgrates_contexts_lock;
+struct list_head *cgrates_contexts;
+
 static inline void cgr_free_acc_ctx(struct cgr_acc_ctx *ctx);
 static void cgr_tmcb_func( struct cell* t, int type, struct tmcb_params *ps);
 static void cgr_tmcb_func_free(void *param);
@@ -37,6 +40,25 @@ static void cgr_dlg_callback(struct dlg_cell *dlg, int type,
 		struct dlg_cb_params *_params);
 
 static str cgr_ctx_str = str_init("cgrX_ctx");
+static str cgr_serial_str = str_init("cgrX_serial");
+
+int cgr_acc_init(void)
+{
+	cgrates_contexts_lock = lock_alloc();
+	if (!cgrates_contexts_lock) {
+		LM_ERR("cannot create lock for cgrates lists\n");
+		return -1;
+	}
+
+	cgrates_contexts = shm_malloc(sizeof *cgrates_contexts);
+	if (!cgrates_contexts) {
+		LM_ERR("cannot create cgrates contexts list\n");
+		return -1;
+	}
+	INIT_LIST_HEAD(cgrates_contexts);
+
+	return 0;
+}
 
 static inline struct cgr_acc_ctx *cgr_new_acc_ctx(struct dlg_cell *dlg)
 {
@@ -50,6 +72,10 @@ static inline struct cgr_acc_ctx *cgr_new_acc_ctx(struct dlg_cell *dlg)
 	LM_DBG("new acc ctx=%p\n", ctx);
 	ctxstr.len = sizeof(ctx);
 	ctxstr.s = (char *)&ctx;
+
+	lock_get(cgrates_contexts_lock);
+	list_add(&ctx->link, cgrates_contexts);
+	lock_release(cgrates_contexts_lock);
 
 	ctx->ref_no = 1;
 	CGR_REF_DBG(ctx, "init");
@@ -169,6 +195,10 @@ static inline void cgr_free_acc_ctx(struct cgr_acc_ctx *ctx)
 		shm_free(ctx->sessions);
 		ctx->sessions = 0;
 	}
+	lock_get(cgrates_contexts_lock);
+	list_del(&ctx->link);
+	lock_release(cgrates_contexts_lock);
+
 	shm_free(ctx);
 	ctx = 0;
 	ctxstr.len = sizeof(ctx);
@@ -333,8 +363,11 @@ static json_object *cgr_get_start_acc_msg(struct sip_msg *msg,
 	struct cgr_acc_sess *si = (struct cgr_acc_sess *)s->acc_info;
 	static str cmd_compat = str_init("SMGenericV1.InitiateSession");
 	static str cmd_ng = str_init("SessionSv1.InitiateSession");
+	struct cgr_kv *kv;
 	str stime;
-	str *callid;
+	str static_callid;
+	str originhost = str_init("");
+	str *callid = NULL;
 	str *cmd = (cgre_compat_mode ? &cmd_compat: &cmd_ng);
 
 	cmsg = cgr_get_generic_msg(cmd, s);
@@ -353,7 +386,13 @@ static json_object *cgr_get_start_acc_msg(struct sip_msg *msg,
 
 	/* OriginID */
 	/* if origin was not added from script, add it now */
-	if (ctx && !cgr_get_const_kv(&s->event_kvs, "OriginID")) {
+	if (ctx && (kv = cgr_get_const_kv(&s->event_kvs, "OriginID"))) {
+		if (kv->flags & CGR_KVF_TYPE_INT) {
+			static_callid.s = int2str(kv->value.n, &static_callid.len);
+			callid = &static_callid;
+		} else
+			callid = &kv->value.s;
+	} else {
 		if (msg->callid==NULL && ((parse_headers(msg, HDR_CALLID_F, 0)==-1) ||
 				(msg->callid==NULL)) ) {
 			LM_ERR("Cannot get callid of the message!\n");
@@ -366,6 +405,23 @@ static json_object *cgr_get_start_acc_msg(struct sip_msg *msg,
 			}
 		}
 	}
+
+	if (ctx && (kv = cgr_get_const_kv(&s->event_kvs, "OriginHost")) &&
+			kv->flags & CGR_KVF_TYPE_STR)
+		originhost = kv->value.s;
+
+	/* figured out the OriginID - now store it in session */
+	si->originid.s = shm_malloc(callid->len + originhost.len);
+	if (!si->originid.s) {
+		LM_ERR("no more memory for callid!\n");
+		goto error;
+	}
+	memcpy(si->originid.s, callid->s, callid->len);
+	si->originid.len = callid->len;
+	/* originhost now */
+	si->originhost.s = si->originid.s + callid->len;
+	si->originhost.len = originhost.len;
+	memcpy(si->originhost.s, originhost.s, originhost.len);
 
 	if (ctx && !cgr_get_const_kv(&s->event_kvs, "DialogID") &&
 			cgr_obj_push_int(cmsg->params, "DialogID", dlg->h_id) < 0) {
@@ -604,6 +660,10 @@ static void cgr_dlg_onwrite(struct dlg_cell *dlg, int type,
 	str buf;
 	char *p;
 
+	/* no need to dump variables for deleted, since these have already been processed */
+	if (dlg->state == DLG_STATE_DELETED)
+		return;
+
 	ctx = *_params->param;
 	LM_DBG("storing in dialog acc ctx=%p\n", ctx);
 
@@ -789,7 +849,7 @@ static void cgr_dlg_onwrite(struct dlg_cell *dlg, int type,
 		LM_BUG("length mismatch between computed and result: %d != %d\n",
 				buf.len, (int)(p - buf.s));
 
-	if (cgr_dlgb.store_dlg_value(dlg, &cgr_ctx_str, &buf) < 0)
+	if (cgr_dlgb.store_dlg_value(dlg, &cgr_serial_str, &buf) < 0)
 		LM_ERR("cannot store the serialized context value!\n");
 
 	pkg_free(buf.s);
@@ -797,8 +857,8 @@ static void cgr_dlg_onwrite(struct dlg_cell *dlg, int type,
 		pkg_free(sessions_kvs);
 }
 
-int w_cgr_acc(struct sip_msg* msg, char *flag_c, char* acc_c, char *dst_c,
-		char *tag_c)
+int w_cgr_acc(struct sip_msg* msg, void *flag_c, str* acc_c, str *dst_c,
+		str *tag_c)
 {
 	str *acc;
 	str *dst;
@@ -846,7 +906,7 @@ int w_cgr_acc(struct sip_msg* msg, char *flag_c, char* acc_c, char *dst_c,
 		LM_ERR("cannot create acc context\n");
 		return -1;
 	}
-	s = cgr_get_sess_new(cgr_get_ctx(), cgr_get_tag(msg, tag_c));
+	s = cgr_get_sess_new(cgr_get_ctx(), tag_c);
 	if (!s) {
 		LM_ERR("cannot create a new session!\n");
 		return -1;
@@ -1053,7 +1113,7 @@ void cgr_loaded_callback(struct dlg_cell *dlg, int type,
 		return;
 	}
 
-	if (cgr_dlgb.fetch_dlg_value(dlg, &cgr_ctx_str, &buf, 0) < 0) {
+	if (cgr_dlgb.fetch_dlg_value(dlg, &cgr_serial_str, &buf, 0) < 0) {
 		LM_DBG("ctx was not saved in dialog\n");
 		return;
 	}
@@ -1237,6 +1297,7 @@ static void cgr_dlg_callback(struct dlg_cell *dlg, int type,
 		LM_ERR("no parameter specified to dlg callback!\n");
 		return;
 	}
+
 	ctx = *_params->param;
 
 	/* stop every session started */
@@ -1257,8 +1318,8 @@ static void cgr_dlg_callback(struct dlg_cell *dlg, int type,
 
 		if (si->flags & CGRF_DO_CDR) {
 			/* if it's not a local transaction we do the accounting on the tm callbacks */
-			if (((t = cgr_tmb.t_gett()) == T_UNDEFINED) || !t ||
-					(t != NULL && !cgr_tmb.t_is_local(_params->msg))) {
+			if (type == DLGCB_TERMINATED && (((t=cgr_tmb.t_gett()) == T_UNDEFINED) ||
+					!t || !cgr_tmb.t_is_local(_params->msg))) {
 				/* normal dialogs will have to do accounting when the response for
 				 * the bye will come because users should be able to populate extra
 				 * vars and leg vars */
@@ -1268,7 +1329,7 @@ static void cgr_dlg_callback(struct dlg_cell *dlg, int type,
 						LM_ERR("failed to register cdr callback!\n");
 					registered = 1;
 				}
-			} else if (t != NULL && cgr_tmb.t_is_local(_params->msg)) {
+			} else {
 				/* for local transactions we generate CDRs here, since all the messages
 				 * have been processed */
 				cgr_cdr(_params->msg, ctx, s, &dlg->callid);
@@ -1345,5 +1406,55 @@ int cgr_acc_terminate(json_object *param, json_object **ret)
 error:
 	LM_ERR("cannot handle terminate: %s\n", err);
 	*ret = json_object_new_string(err);
+	return -1;
+}
+
+int cgr_acc_sessions(json_object *param, json_object **ret)
+{
+	json_object *obj, *originstr, *hoststr;
+	struct cgr_acc_ctx *ctx;
+	struct cgr_session *s;
+	struct cgr_acc_sess *si;
+	struct list_head *lc, *la;
+
+	*ret = json_object_new_array();
+	if (!*ret) {
+		LM_ERR("cannot return result's array!\n");
+		goto error;
+	}
+	lock_get(cgrates_contexts_lock);
+	list_for_each(lc, cgrates_contexts) {
+		ctx = list_entry(lc, struct cgr_acc_ctx, link);
+		list_for_each(la, ctx->sessions) {
+			s = list_entry(la, struct cgr_session, list);
+			si = s->acc_info;
+			if (!si || !(si->flags & CGRF_ENGAGED))
+				continue;
+			obj = json_object_new_object();
+			if (!obj) {
+				LM_ERR("cannot allocate all data - flushing!\n");
+				goto partial;
+			}
+			hoststr = json_object_new_string_len(si->originhost.s, si->originhost.len);
+			if (!hoststr) {
+				LM_ERR("cannot allocate all data for originstr - flushing!\n");
+				goto partial;
+			}
+			json_object_object_add(obj, "OriginHost", hoststr);
+
+			originstr = json_object_new_string_len(si->originid.s, si->originid.len);
+			if (!originstr) {
+				LM_ERR("cannot allocate all data for originstr - flushing!\n");
+				goto partial;
+			}
+			json_object_object_add(obj, "OriginID", originstr);
+			json_object_array_add(*ret, obj);
+		}
+	}
+partial:
+	lock_release(cgrates_contexts_lock);
+	return 0;
+error:
+	*ret = json_object_new_string("out of memory");
 	return -1;
 }

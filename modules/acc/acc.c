@@ -58,13 +58,9 @@
 
 #define TABLE_VERSION 7
 
-#define GET_LEN(p)	(*((unsigned char*)p) | *((unsigned char*)p+1) << 8)
-#define MAX_LEN_VALUE 65535
-#define SET_LEN(p,n) \
-	do { \
-		*(p) = (n) & 0x00FF; \
-		*(p+1) = (n) >> 8; \
-	} while(0)
+#define GET_LEN(p)     (*(unsigned short *)(p))
+#define MAX_LEN_VALUE  USHRT_MAX
+#define SET_LEN(p, n)  (*(unsigned short *)(p) = (unsigned short)(n))
 
 #define LEG_VALUE( leg, extra, ctx) (ctx->leg_values[leg][extra->tag_idx].value)
 
@@ -74,7 +70,6 @@ str leg_str = str_init("accX_leg");
 str flags_str = str_init("accX_flags");
 str table_str = str_init("accX_table");
 str extra_str = str_init("accX_extra");
-str acc_ctx_str = str_init("accX_ctx");
 
 extern struct acc_extra *log_extra_tags;
 extern struct acc_extra *db_extra_tags;
@@ -192,16 +187,7 @@ static inline int core2strar( struct sip_msg *req, str *c_vals)
 /********************************************
  *        LOG  ACCOUNTING
  ********************************************/
-static str log_attrs[ACC_CORE_LEN+ACC_DLG_LEN+MAX_ACC_EXTRA+MAX_ACC_LEG];
-
-#define SET_LOG_ATTR(_n,_atr)  \
-	do { \
-		log_attrs[_n].s=A_##_atr; \
-		log_attrs[_n].len=A_##_atr##_LEN; \
-		n++; \
-	} while(0)
-
-
+static str log_attrs[ACC_CORE_LEN + ACC_DLG_LEN + MAX_ACC_EXTRA + MAX_ACC_LEG];
 void acc_log_init(void)
 {
 	struct acc_extra *extra;
@@ -210,25 +196,25 @@ void acc_log_init(void)
 	n = 0;
 
 	/* fixed core attributes */
-	SET_LOG_ATTR(n,METHOD);
-	SET_LOG_ATTR(n,FROMTAG);
-	SET_LOG_ATTR(n,TOTAG);
-	SET_LOG_ATTR(n,CALLID);
-	SET_LOG_ATTR(n,CODE);
-	SET_LOG_ATTR(n,STATUS);
+	init_str(&log_attrs[n++], A_METHOD);
+	init_str(&log_attrs[n++], A_FROMTAG);
+	init_str(&log_attrs[n++], A_TOTAG);
+	init_str(&log_attrs[n++], A_CALLID);
+	init_str(&log_attrs[n++], A_CODE);
+	init_str(&log_attrs[n++], A_STATUS);
 
 	/* init the extra db keys */
-	for(extra=log_extra_tags; extra ; extra=extra->next)
+	for (extra = log_extra_tags; extra; extra = extra->next)
 		log_attrs[n++] = extra->name;
 
 	/* multi leg call columns */
-	for( extra=log_leg_tags; extra ; extra=extra->next)
+	for (extra = log_leg_tags; extra; extra = extra->next)
 		log_attrs[n++] = extra->name;
 
 	/* cdrs columns */
-	SET_LOG_ATTR(n,DURATION);
-	SET_LOG_ATTR(n,SETUPTIME);
-	SET_LOG_ATTR(n,CREATED);
+	init_str(&log_attrs[n++], A_DURATION);
+	init_str(&log_attrs[n++], A_SETUPTIME);
+	init_str(&log_attrs[n++], A_CREATED);
 }
 
 int acc_log_cdrs(struct dlg_cell *dlg, struct sip_msg *msg, acc_ctx_t* ctx)
@@ -1369,43 +1355,29 @@ end:
 
 /* Functions used to store values into dlg */
 
-static str cdr_buf = {NULL, 0};
-int cdr_len = 0;
+static str cdr_buf;
+int cdr_data_len;
 
 int set_dlg_value(str *value)
 {
 	if (value->s == NULL)
 		value->len = 0;
 
-	if (cdr_buf.len + value->len + 2 > cdr_len) {
-		if (cdr_len == 0) {
-			cdr_len = STRING_INIT_SIZE;
-			cdr_buf.s = (char*)pkg_malloc(cdr_len);
-			if (!cdr_buf.s) {
-				LM_ERR("No more memory\n");
-				return -1;
-			}
-		} else {
-			do {
-				/* realloc until memory is large enough  */
-				cdr_len *= 2;
-			} while (cdr_len < cdr_buf.len + value->len + 2);
-			cdr_buf.s = pkg_realloc(cdr_buf.s, cdr_len);
-			if (cdr_buf.s == NULL) {
-				LM_ERR("No more memory\n");
-				return -1;
-			}
-		}
-	}
-
 	if (value->len > MAX_LEN_VALUE) {
+		LM_WARN("value too long, truncating! (%.*s..., len: %d)\n",
+		        64, value->s, value->len);
 		value->len = MAX_LEN_VALUE;
-		LM_WARN("Value too log, truncating..\n");
 	}
-	SET_LEN(cdr_buf.s + cdr_buf.len, value->len);
 
-	memcpy(cdr_buf.s + cdr_buf.len + 2, value->s, value->len);
-	cdr_buf.len += value->len + 2;
+	if (pkg_str_extend(&cdr_buf, cdr_data_len + value->len + 2) != 0) {
+		LM_ERR("oom\n");
+		return -1;
+	}
+
+	SET_LEN(cdr_buf.s + cdr_data_len, value->len);
+
+	memcpy(cdr_buf.s + cdr_data_len + 2, value->s, value->len);
+	cdr_data_len += value->len + 2;
 
 	return 1;
 }
@@ -1413,7 +1385,7 @@ int set_dlg_value(str *value)
 static void complete_dlg_values(str *stored_values,str *val_arr,short nr_vals)
 {
 	short i;
-	char *p = stored_values->s + stored_values->len;
+	char *p = stored_values->s;
 	short len;
 
 	for (i=0;i<nr_vals;i++)
@@ -1423,19 +1395,21 @@ static void complete_dlg_values(str *stored_values,str *val_arr,short nr_vals)
 		val_arr[i].s = p+2;
 		p = p + len + 2;
 	}
-
-	stored_values->len = p - stored_values->s;
 }
 
 /* stores core values and leg values into dlg */
 int store_core_leg_values(struct dlg_cell *dlg, struct sip_msg *req)
 {
+	str bytes;
+
 	if ( build_core_dlg_values(dlg, req) < 0) {
 		LM_ERR("cannot build core value string\n");
 		return -1;
 	}
 
-	if ( dlg_api.store_dlg_value(dlg, &core_str, &cdr_buf) < 0) {
+	bytes.s = cdr_buf.s;
+	bytes.len = cdr_data_len;
+	if ( dlg_api.store_dlg_value(dlg, &core_str, &bytes) < 0) {
 		LM_ERR("cannot store core values into dialog\n");
 		return -1;
 	}
@@ -1448,12 +1422,16 @@ int store_core_leg_values(struct dlg_cell *dlg, struct sip_msg *req)
 int store_extra_values(extra_value_t* values, str *values_str,
 		struct dlg_cell *dlg)
 {
+	str bytes;
+
 	if ( build_extra_dlg_values(values) < 0) {
 		LM_ERR("cannot build core value string\n");
 		return -1;
 	}
 
-	if ( dlg_api.store_dlg_value(dlg, values_str, &cdr_buf) < 0) {
+	bytes.s = cdr_buf.s;
+	bytes.len = cdr_data_len;
+	if ( dlg_api.store_dlg_value(dlg, values_str, &bytes) < 0) {
 		LM_ERR("cannot store core values into dialog\n");
 		return -1;
 	}
@@ -1463,6 +1441,8 @@ int store_extra_values(extra_value_t* values, str *values_str,
 
 int store_leg_values(acc_ctx_t* ctx, str* values_str, struct dlg_cell *dlg)
 {
+	str bytes;
+
 	if (ctx == NULL || values_str == NULL) {
 		LM_ERR("bad usage!\n");
 		return -1;
@@ -1473,7 +1453,9 @@ int store_leg_values(acc_ctx_t* ctx, str* values_str, struct dlg_cell *dlg)
 		return -1;
 	}
 
-	if (dlg_api.store_dlg_value(dlg, values_str,&cdr_buf) < 0) {
+	bytes.s = cdr_buf.s;
+	bytes.len = cdr_data_len;
+	if (dlg_api.store_dlg_value(dlg, values_str, &bytes) < 0) {
 		LM_ERR("cannot store dialog string\n");
 		return -1;
 	}
@@ -1487,7 +1469,7 @@ static int build_core_dlg_values(struct dlg_cell *dlg,struct sip_msg *req)
 	str value;
 	int i, count;
 
-	cdr_buf.len = 0;
+	cdr_data_len = 0;
 	count = core2strar( req, val_arr);
 	for (i=0; i<count; i++)
 		if (set_dlg_value(&val_arr[i]) < 0)
@@ -1507,7 +1489,13 @@ static int build_extra_dlg_values(extra_value_t* values)
 	str val_arr[MAX_ACC_EXTRA];
 	int nr, i;
 
-	cdr_buf.len = 2;
+	/* init cdr buf before doing SET_LEN on it */
+	if (pkg_str_extend(&cdr_buf, STRING_INIT_SIZE) != 0) {
+		LM_ERR("oom\n");
+		return -1;
+	}
+
+	cdr_data_len = 2;
 	nr = extra2strar(values, val_arr, 0);
 
 	for (i=0; i<nr; i++)
@@ -1524,17 +1512,12 @@ static int build_leg_dlg_values(acc_ctx_t* ctx)
 	int i, j;
 
 	/* init cdr buf before doing SET_LEN on it */
-	if (cdr_len==0) {
-		cdr_buf.s = pkg_malloc(STRING_INIT_SIZE);
-		if (cdr_buf.s == NULL) {
-			LM_ERR(" no more pkg mem\n");
-			return -1;
-		}
-
-		cdr_len = STRING_INIT_SIZE;
+	if (pkg_str_extend(&cdr_buf, STRING_INIT_SIZE) != 0) {
+		LM_ERR("oom\n");
+		return -1;
 	}
 
-	cdr_buf.len = 4;
+	cdr_data_len = 4;
 	if (!ctx->leg_values)
 		SET_LEN(cdr_buf.s,0);
 	else {
@@ -1553,13 +1536,13 @@ static int build_leg_dlg_values(acc_ctx_t* ctx)
 }
 
 /* create accounting dialog */
-int create_acc_dlg(struct sip_msg* req)
+struct dlg_cell *create_acc_dlg(struct sip_msg* req)
 {
 	struct dlg_cell *dlg;
 
 	if (!dlg_api.get_dlg) {
 		LM_ERR("dialog not loaded!\n");
-		return -1;
+		return NULL;
 	}
 
 	dlg = dlg_api.get_dlg();
@@ -1567,16 +1550,16 @@ int create_acc_dlg(struct sip_msg* req)
 		/* if the dialog doesn't exist we try to create it */
 		if ( dlg_api.create_dlg(req,0) < 0) {
 			LM_ERR("error creating new dialog\n");
-			return -1;
+			return NULL;
 		}
 		dlg = dlg_api.get_dlg();
 		if (!dlg) {
 			LM_ERR("error getting new dialog\n");
-			return -1;
+			return NULL;
 		}
 	}
 
-	return 1;
+	return dlg;
 }
 
 
@@ -1595,7 +1578,7 @@ static int prebuild_core_arr(struct dlg_cell *dlg, str *buffer, struct timeval *
 		LM_ERR("cannot fetch core string value\n");
 		return -1;
 	}
-	buffer->len = 0;
+
 	complete_dlg_values(buffer, val_arr, ACC_CORE_LEN+1);
 	memcpy(start, val_arr[ACC_CORE_LEN].s, val_arr[ACC_CORE_LEN].len);
 
@@ -1608,18 +1591,12 @@ static int prebuild_core_arr(struct dlg_cell *dlg, str *buffer, struct timeval *
  *
  *
  */
-static extra_value_t* restore_extra_from_str(tag_t* tags, int tags_len,
-												str* extra_s, int extra_len)
+static int restore_extra_from_str(extra_value_t *values,
+											 str* extra_s, int extra_len)
 {
 	int i;
 
 	pv_value_t value;
-	extra_value_t* values;
-
-	if (build_acc_extra_array(tags, tags_len, &values) < 0) {
-		LM_ERR("failed to build extra pvar list!\n");
-		return NULL;
-	}
 
 	value.flags = PV_VAL_STR;
 	for (i=0; i<extra_len; i++) {
@@ -1629,28 +1606,28 @@ static extra_value_t* restore_extra_from_str(tag_t* tags, int tags_len,
 
 		if (set_value_shm(&value, &values[i])< 0) {
 			LM_ERR("failed to set shm value!\n");
-			return NULL;
+			return -1;
 		}
 
 		extra_s->s += 2 + value.rs.len;
 		extra_s->len -= 2 + value.rs.len;
 	}
 
-	return values;
+	return 0;
 }
 
 static int restore_extra(struct dlg_cell* dlg,
 			str *type_str, acc_ctx_t* ctx)
 {
 	int extra_len;
-	str buffer = {0, 0};
+	str buffer;
 
 	if (ctx == NULL) {
 		LM_ERR("bad call!\n");
 		return -1;
 	}
 
-	if (dlg_api.fetch_dlg_value(dlg, type_str, &buffer, 1) < 0) {
+	if (dlg_api.fetch_dlg_value(dlg, type_str, &buffer, 0) < 0) {
 		LM_ERR("cannot fetch <%.*s> value from dialog!\n",
 				type_str->len, type_str->s);
 		return -1;
@@ -1661,9 +1638,21 @@ static int restore_extra(struct dlg_cell* dlg,
 	buffer.s += 2;
 	buffer.len -= 2;
 
-	if ((ctx->extra_values =
-		restore_extra_from_str(extra_tags, extra_tgs_len, &buffer, extra_len)) == NULL) {
+	if (extra_len != extra_tgs_len) {
+		LM_WARN("extra tags were added/removed since last run!"
+				"won't restore values!\n");
+		return 0;
+	}
+
+	if (!ctx->extra_values &&
+			build_acc_extra_array(extra_len, &ctx->extra_values) < 0) {
+		LM_ERR("failed to build extra pvar list!\n");
+		return -1;
+	}
+
+	if (restore_extra_from_str(ctx->extra_values, &buffer, extra_len) < 0) {
 		LM_ERR("failed to restore extra values!\n");
+		free_extra_array(ctx->extra_values, extra_len);
 		return -1;
 	}
 
@@ -1674,14 +1663,14 @@ static int restore_legs(struct dlg_cell* dlg,
 			str *type_str, acc_ctx_t* ctx)
 {
 	short extra_len, i;
-	str buffer = {0, 0};
+	str buffer;
 
 	if (ctx == NULL) {
 		LM_ERR("bad call!\n");
 		return -1;
 	}
 
-	if (dlg_api.fetch_dlg_value(dlg, type_str, &buffer, 1) < 0) {
+	if (dlg_api.fetch_dlg_value(dlg, type_str, &buffer, 0) < 0) {
 		LM_ERR("cannot fetch <%.*s> value from dialog!\n",
 				type_str->len, type_str->s);
 		return -1;
@@ -1695,23 +1684,53 @@ static int restore_legs(struct dlg_cell* dlg,
 		return 0;
 	}
 
-	ctx->leg_values = shm_malloc(ctx->legs_no * sizeof(leg_value_p));
-	if (ctx->leg_values == NULL) {
-		LM_ERR("no more shm!\n");
-		return -1;
+	if (!ctx->leg_values) {
+		ctx->leg_values = shm_malloc(ctx->legs_no * sizeof(leg_value_p));
+		if (ctx->leg_values == NULL) {
+			LM_ERR("no more shm!\n");
+			return -1;
+		}
+		for (i=0; i<ctx->legs_no; i++) {
+			if (build_acc_extra_array(extra_len, &ctx->leg_values[i]) < 0) {
+				LM_ERR("could not build extra leg %d\n", i);
+				goto error;
+			}
+		}
 	}
 
 	buffer.s += 4;
 	buffer.len -=4;
 
 	for (i=0; i<ctx->legs_no; i++) {
-		if ((ctx->leg_values[i] =
-			restore_extra_from_str(leg_tags, leg_tgs_len, &buffer, extra_len)) == NULL) {
+		if (restore_extra_from_str(ctx->leg_values[i], &buffer, extra_len) < 0) {
 			LM_ERR("failed to restore leg values!\n");
-			return -1;
+			goto error;
 		}
 	}
 
+	return 0;
+error:
+	for (i--; i >= 0; i--)
+		free_extra_array(ctx->leg_values[i], extra_len);
+	shm_free(ctx->leg_values);
+	return -1;
+}
+
+int restore_dlg_extra_ctx(struct dlg_cell* dlg, acc_ctx_t *ctx)
+{
+	if (extra_tags &&
+			restore_extra(dlg, &extra_str, ctx)) {
+		LM_ERR("failed to restore extra!\n");
+		return -1;
+	}
+
+	if (leg_tags &&
+			restore_legs(dlg, &leg_str, ctx)) {
+		LM_ERR("failed to restore legs!\n");
+		if (extra_tgs_len && ctx->extra_values)
+			free_extra_array(ctx->extra_values, extra_tgs_len);
+		return -1;
+	}
 	return 0;
 }
 
@@ -1737,15 +1756,8 @@ int restore_dlg_extra(struct dlg_cell* dlg, acc_ctx_t** ctx_p)
 
 	memset(ctx, 0, sizeof(acc_ctx_t));
 
-	if (extra_tags &&
-			restore_extra(dlg, &extra_str, ctx)) {
-		LM_ERR("failed to restore extra!\n");
-		return -1;
-	}
-
-	if (leg_tags &&
-			restore_legs(dlg, &leg_str, ctx)) {
-		LM_ERR("failed to restore legs!\n");
+	if (restore_dlg_extra_ctx(dlg, ctx) < 0) {
+		shm_free(ctx);
 		return -1;
 	}
 

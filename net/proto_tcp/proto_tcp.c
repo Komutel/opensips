@@ -71,7 +71,10 @@ static int tcp_conn_init(struct tcp_connection* c);
 static void tcp_conn_clean(struct tcp_connection* c);
 static void tcp_report(int type, unsigned long long conn_id, int conn_flags,
 		void *extra);
-static struct mi_root* tcp_trace_mi(struct mi_root* cmd, void* param );
+static mi_response_t *w_tcp_trace_mi(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+static mi_response_t *w_tcp_trace_mi_1(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
 #define TRACE_PROTO "proto_hep"
 
@@ -138,8 +141,8 @@ struct tcp_data {
 
 
 static cmd_export_t cmds[] = {
-	{"proto_init", (cmd_function)proto_tcp_init, 0, 0, 0, 0},
-	{0,0,0,0,0,0}
+	{"proto_init", (cmd_function)proto_tcp_init, {{0, 0, 0}}, 0},
+	{0,0,{{0,0,0}},0}
 };
 
 
@@ -163,8 +166,13 @@ static param_export_t params[] = {
 };
 
 static mi_export_t mi_cmds[] = {
-	{ "tcp_trace", 0, tcp_trace_mi,   0,  0,  0 },
-	{ 0, 0, 0, 0, 0, 0}
+	{ "tcp_trace", 0, 0, 0, {
+		{w_tcp_trace_mi, {0}},
+		{w_tcp_trace_mi_1, {"trace_mode", 0}},
+		{EMPTY_MI_RECIPE}
+		}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 /* module dependencies */
@@ -183,7 +191,9 @@ struct module_exports proto_tcp_exports = {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
-	&deps,            /* OpenSIPS module dependencies */
+	0,               /* load function */
+	&deps,           /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	params,     /* module parameters */
@@ -196,6 +206,7 @@ struct module_exports proto_tcp_exports = {
 	0,          /* response function */
 	0,          /* destroy function */
 	0,          /* per-child init function */
+	0           /* reload confirm function */
 };
 
 static int proto_tcp_init(struct proto_info *pi)
@@ -261,7 +272,8 @@ static int mod_init(void)
 	*trace_is_on = trace_is_on_tmp;
 	if ( trace_filter_route ) {
 		trace_filter_route_id =
-			get_script_route_ID_by_name( trace_filter_route, rlist, RT_NO);
+			get_script_route_ID_by_name( trace_filter_route, sroutes->request,
+				RT_NO);
 	}
 
 	return 0;
@@ -767,9 +779,9 @@ static int proto_tcp_send(struct socket_info* send_sock,
 	if (to){
 		su2ip_addr(&ip, to);
 		port=su_getport(to);
-		n = tcp_conn_get(id, &ip, port, PROTO_TCP, &c, &fd);
+		n = tcp_conn_get(id, &ip, port, PROTO_TCP, NULL, &c, &fd);
 	}else if (id){
-		n = tcp_conn_get(id, 0, 0, PROTO_NONE, &c, &fd);
+		n = tcp_conn_get(id, 0, 0, PROTO_NONE, &c, NULL, &fd);
 	}else{
 		LM_CRIT("tcp_send called with null id & to\n");
 		get_time_difference(get,tcpthreshold,tcp_timeout_con_get);
@@ -792,7 +804,8 @@ static int proto_tcp_send(struct socket_info* send_sock,
 			LM_ERR("Unknown destination - cannot open new tcp connection\n");
 			return -1;
 		}
-		LM_DBG("no open tcp connection found, opening new one, async = %d\n",tcp_async);
+		LM_DBG("no open tcp connection found, opening new one, async = %d\n",
+			tcp_async);
 		/* create tcp connection */
 		if (tcp_async) {
 			n = tcpconn_async_connect(send_sock, to, buf, len, &c, &fd);
@@ -806,8 +819,6 @@ static int proto_tcp_send(struct socket_info* send_sock,
 				ip_addr2a( &c->rcv.src_ip ), c->rcv.src_port,
 				ip_addr2a( &c->rcv.dst_ip ), c->rcv.dst_port );
 
-
-
 			if (n==0) {
 				/* trace the message */
 				if ( TRACE_ON( c->flags ) &&
@@ -815,7 +826,8 @@ static int proto_tcp_send(struct socket_info* send_sock,
 					if ( tcpconn2su( c, &src_su, &dst_su) < 0 ) {
 						LM_ERR("can't create su structures for tracing!\n");
 					} else {
-						trace_message_atonce( PROTO_TCP, c->cid, &src_su, &dst_su,
+						trace_message_atonce( PROTO_TCP, c->cid,
+							&src_su, &dst_su,
 							TRANS_TRACE_CONNECT_START, TRANS_TRACE_SUCCESS,
 							&AS_CONNECT_INIT, t_dst );
 					}
@@ -823,6 +835,8 @@ static int proto_tcp_send(struct socket_info* send_sock,
 
 				/* mark the ID of the used connection (tracing purposes) */
 				last_outgoing_tcp_id = c->id;
+				send_sock->last_local_real_port = c->rcv.dst_port;
+				send_sock->last_remote_real_port = c->rcv.src_port;
 
 				/* connect is still in progress, break the sending
 				 * flow now (the actual write will be done when
@@ -911,6 +925,8 @@ static int proto_tcp_send(struct socket_info* send_sock,
 
 			/* mark the ID of the used connection (tracing purposes) */
 			last_outgoing_tcp_id = c->id;
+			send_sock->last_local_real_port = c->rcv.dst_port;
+			send_sock->last_remote_real_port = c->rcv.src_port;
 
 			/* we successfully added our write chunk - success */
 			sh_log(c->hist, TCP_SEND2MAIN, "send 3, (%d)", c->refcnt);
@@ -957,6 +973,8 @@ send_it:
 
 	/* mark the ID of the used connection (tracing purposes) */
 	last_outgoing_tcp_id = c->id;
+	send_sock->last_local_real_port = c->rcv.dst_port;
+	send_sock->last_remote_real_port = c->rcv.src_port;
 
 	sh_log(c->hist, TCP_SEND2MAIN, "send 6, (%d, async: %d)", c->refcnt, n < len);
 	tcp_conn_release(c, (n<len)?1:0/*pending data in async mode?*/ );
@@ -1193,46 +1211,45 @@ error:
 	return -1;
 }
 
-
-static struct mi_root* tcp_trace_mi(struct mi_root* cmd_tree, void* param )
+static mi_response_t *w_tcp_trace_mi(const mi_params_t *mi_params,
+								struct mi_handler *async_hdl)
 {
-	struct mi_node* node;
+	mi_response_t *resp;
+	mi_item_t *resp_obj;
 
-	struct mi_node *rpl;
-	struct mi_root *rpl_tree ;
+	resp = init_mi_result_object(&resp_obj);
+	if (!resp)
+		return 0;
 
-	node = cmd_tree->node.kids;
-	if(node == NULL) {
-		/* display status on or off */
-		rpl_tree = init_mi_tree( 200, MI_SSTR(MI_OK));
-		if (rpl_tree == 0)
-			return 0;
-		rpl = &rpl_tree->node;
-
-		if ( *trace_is_on ) {
-			node = add_mi_node_child(rpl,0,MI_SSTR("TCP tracing"),MI_SSTR("on"));
-		} else {
-			node = add_mi_node_child(rpl,0,MI_SSTR("TCP tracing"),MI_SSTR("off"));
-		}
-
-		return rpl_tree ;
-	} else if ( node && !node->next ) {
-		if ( (node->value.s[0] | 0x20) == 'o' &&
-				(node->value.s[1] | 0x20) == 'n' ) {
-			*trace_is_on = 1;
-			return init_mi_tree( 200, MI_SSTR(MI_OK));
-		} else
-		if ( (node->value.s[0] | 0x20) == 'o' &&
-				(node->value.s[1] | 0x20) == 'f' &&
-				(node->value.s[2] | 0x20) == 'f' ) {
-			*trace_is_on = 0;
-			return init_mi_tree( 200, MI_SSTR(MI_OK));
-		} else {
-			return init_mi_tree( 500, MI_SSTR(MI_INTERNAL_ERR));
-		}
-	} else {
-		return init_mi_tree( 500, MI_SSTR(MI_INTERNAL_ERR));
+	if (add_mi_string_fmt(resp_obj, MI_SSTR("TCP tracing"), "%s",
+		*trace_is_on ? "on" : "off") < 0) {
+		free_mi_response(resp);
+		return 0;
 	}
 
-	return NULL;
+	return resp;
+}
+
+static mi_response_t *w_tcp_trace_mi_1(const mi_params_t *mi_params,
+								struct mi_handler *async_hdl)
+{
+	str new_mode;
+
+	if (get_mi_string_param(mi_params, "trace_mode", &new_mode.s, &new_mode.len) < 0)
+		return init_mi_param_error();
+
+	if ((new_mode.s[0] | 0x20) == 'o' &&
+		(new_mode.s[1] | 0x20) == 'n' ) {
+		*trace_is_on = 1;
+		return init_mi_result_ok();
+	} else if ((new_mode.s[0] | 0x20) == 'o' &&
+			  (new_mode.s[1] | 0x20) == 'f' &&
+			  (new_mode.s[2] | 0x20) == 'f') {
+		*trace_is_on = 0;
+		return init_mi_result_ok();
+	} else {
+		return init_mi_error_extra(JSONRPC_INVAL_PARAMS_CODE,
+			MI_SSTR(JSONRPC_INVAL_PARAMS_MSG),
+			MI_SSTR("trace_mode should be 'on' or 'off'"));
+	}
 }

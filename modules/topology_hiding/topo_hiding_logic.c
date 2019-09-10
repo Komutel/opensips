@@ -848,8 +848,7 @@ static void _th_no_dlg_onreply(struct cell* t, int type, struct tmcb_params *par
 
 	/* pass record route headers */
 	if(req->record_route){
-		if(print_rr_body(req->record_route, &rr_set, 0,
-							0) != 0 ){
+		if(print_rr_body(req->record_route, &rr_set, 0, 1, NULL) != 0 ){
 			LM_ERR("failed to print route records \n");
 			return;
 		}
@@ -1001,7 +1000,7 @@ void th_loaded_callback(struct dlg_cell *dlg, int type,
 
 static void topo_unref_dialog(void *dialog)
 {
-	dlg_api.unref_dlg((struct dlg_cell*)dialog, 1);
+	dlg_api.dlg_unref((struct dlg_cell*)dialog, 1);
 }
 
 static void topo_dlg_initial_reply (struct dlg_cell* dlg, int type,
@@ -1073,12 +1072,12 @@ static void topo_dlg_onroute (struct dlg_cell* dlg, int type,
 	}
 
 	/* register tm callback for response in  */
-	dlg_api.ref_dlg(dlg,1);
+	dlg_api.dlg_ref(dlg,1);
 	if (tm_api.register_tmcb( req, 0, TMCB_RESPONSE_FWDED,
 	(dir==DLG_DIR_UPSTREAM)?th_down_onreply:th_up_onreply,
 	(void*)dlg, topo_unref_dialog)<0 ) {
 		LM_ERR("failed to register TMCB\n");
-		dlg_api.unref_dlg(dlg,1);
+		dlg_api.dlg_unref(dlg,1);
 		return;
 	}
 
@@ -1428,8 +1427,10 @@ int topo_callid_post_raw(str *data, struct sip_msg* foo)
 	memset(&msg,0,sizeof(struct sip_msg));
 	msg.buf=data->s;
 	msg.len=data->len;
-	if (dlg_th_callid_pre_parse(&msg,1) < 0)
+	if (dlg_th_callid_pre_parse(&msg,1) < 0) {
+		LM_ERR("could not parse resulted sip message!\n");
 		goto done;
+	}
 
 	if (msg.first_line.type==SIP_REQUEST) {
 		if (get_to(&msg)->tag_value.len>0) {
@@ -1523,8 +1524,7 @@ static char* build_encoded_contact_suffix(struct sip_msg* msg,int *suffix_len)
 	}
 
 	if(msg->record_route){
-		if(print_rr_body(msg->record_route, &rr_set, !is_req,
-							0) != 0 ){
+		if(print_rr_body(msg->record_route, &rr_set, !is_req, 0, NULL) != 0){
 			LM_ERR("failed to print route records \n");
 			return NULL;
 		}

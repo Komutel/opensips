@@ -603,12 +603,12 @@ int b2b_prescript_f(struct sip_msg *msg, void *uparam)
 		/* send 200 OK and exit */
 		tmb.t_reply(msg, 200, &reason);
 		tm_tran = tmb.t_gett();
-		if(tm_tran)
+		if(tm_tran && tm_tran!=T_UNDEFINED)
 			tmb.unref_cell(tm_tran);
 
 		/* No need to apply lumps */
 		if(req_routeid > 0)
-			run_top_route(rlist[req_routeid].a, msg);
+			run_top_route(sroutes->request[req_routeid].a, msg);
 
 		goto done;
 	}
@@ -805,7 +805,7 @@ logic_notify:
 	if(req_routeid > 0)
 	{
 		lock_release(&table[hash_index].lock);
-		run_top_route(rlist[req_routeid].a, msg);
+		run_top_route(sroutes->request[req_routeid].a, msg);
 		if (b2b_apply_lumps(msg))
 		{
 			if (parse_from_header(msg) < 0)
@@ -1143,7 +1143,8 @@ b2b_dlg_t* b2b_new_dlg(struct sip_msg* msg, str* local_contact,
 
 	if(msg->record_route!=NULL && msg->record_route->body.s!= NULL)
 	{
-		if( print_rr_body(msg->record_route, &dlg.route_set[CALLER_LEG], (init_dlg?1:0), 0)!= 0)
+		if( print_rr_body(msg->record_route, &dlg.route_set[CALLER_LEG],
+		(init_dlg?1:0), 0, NULL)!= 0)
 		{
 			LM_ERR("failed to process record route\n");
 		}
@@ -1868,7 +1869,7 @@ dlg_leg_t* b2b_new_leg(struct sip_msg* msg, str* to_tag, int mem_type)
 
 	if(msg->record_route!=NULL && msg->record_route->body.s!= NULL)
 	{
-		if( print_rr_body(msg->record_route, &route_set, 1, 0)!= 0)
+		if( print_rr_body(msg->record_route, &route_set, 1, 0, NULL)!= 0)
 		{
 			LM_ERR("failed to process record route\n");
 			goto error;
@@ -1883,7 +1884,7 @@ dlg_leg_t* b2b_new_leg(struct sip_msg* msg, str* to_tag, int mem_type)
 
 	if(new_leg == NULL)
 	{
-		LM_ERR("No more shared memory");
+		LM_ERR("No more shared memory\n");
 		if(route_set.s)
 			pkg_free(route_set.s);
 		goto error;
@@ -2008,7 +2009,7 @@ static int build_extra_headers_from_msg(str buf, str *extra_hdr,
 	req.buf = buf.s;
 	req.len = buf.len;
 	if (parse_msg(buf.s, buf.len, &req)!=0) {
-		LM_CRIT("BUG - buffer parsing failed!");
+		LM_CRIT("BUG - buffer parsing failed!\n");
 		return -1;
 	}
 	/* parse all headers */
@@ -2089,6 +2090,7 @@ error:
 void b2b_tm_cback(struct cell *t, b2b_table htable, struct tmcb_params *ps)
 {
 	struct sip_msg * msg;
+	str msg_body;
 	str* b2b_key;
 	unsigned int hash_index, local_index;
 	b2b_notify_t b2b_cback;
@@ -2386,10 +2388,14 @@ void b2b_tm_cback(struct cell *t, b2b_table htable, struct tmcb_params *ps)
 				crd = uac_auth_api._lookup_realm( &auth->realm );
 				if(crd)
 				{
+					if ((auth->flags & QOP_AUTH_INT) && get_body(msg, &msg_body) < 0) {
+						LM_ERR("Failed to get message body\n");
+						goto done;
+					}
 					memset(&auth_nc_cnonce, 0,
 							sizeof(struct authenticate_nc_cnonce));
-					uac_auth_api._do_uac_auth(&t->method, &t->uac[0].uri, crd,
-							auth, &auth_nc_cnonce, response);
+					uac_auth_api._do_uac_auth(&msg_body, &t->method,
+							&t->uac[0].uri, crd, auth, &auth_nc_cnonce, response);
 					new_hdr = uac_auth_api._build_authorization_hdr(statuscode,
 							&t->uac[0].uri, crd, auth,
 							&auth_nc_cnonce, response);
@@ -2423,7 +2429,7 @@ void b2b_tm_cback(struct cell *t, b2b_table htable, struct tmcb_params *ps)
 					/* run the b2b route */
 					if(reply_routeid > 0) {
 						msg->flags = t->uac[0].br_flags;
-						run_top_route(rlist[reply_routeid].a, msg);
+						run_top_route(sroutes->request[reply_routeid].a, msg);
 						b2b_apply_lumps(msg);
 					}
 					goto b2b_route;
@@ -2763,7 +2769,7 @@ done1:
 	/* run the b2b route */
 	if(reply_routeid > 0) {
 		msg->flags = t->uac[0].br_flags;
-		run_top_route(rlist[reply_routeid].a, msg);
+		run_top_route(sroutes->request[reply_routeid].a, msg);
 		if (msg != FAKED_REPLY) b2b_apply_lumps(msg);
 	}
 

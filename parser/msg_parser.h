@@ -103,7 +103,7 @@ enum request_method {
                                       * callback had already been registered */
 #define FL_NAT_TRACK_DIALOG  (1<<13) /* trigger dialog tracking from the
                                       * nat_traversal module */
-#define FL_USE_SIPTRACE      (1<<14) /* used by siptrace to check if the tm
+#define FL_USE_SIPTRACE      (1<<14) /* used by tracer to check if the tm
                                       * callbacks were registered */
 #define FL_SHM_UPDATABLE     (1<<15) /* a SHM cloned message can be updated
                                       * (TM used, requires FL_SHM_CLONE) */
@@ -127,7 +127,7 @@ enum request_method {
 
 #define IFISMETHOD(methodname,firstchar)                                  \
 if (  (*tmp==(firstchar) || *tmp==((firstchar) | 32)) &&                  \
-        strncasecmp( tmp+1, #methodname +1, methodname##_LEN-1)==0 &&     \
+        strncasecmp( tmp+1, (char *)#methodname+1, methodname##_LEN-1)==0 &&     \
         *(tmp+methodname##_LEN)==' ') {                                   \
                 fl->type=SIP_REQUEST;                                     \
                 fl->u.request.method.len=methodname##_LEN;                \
@@ -474,6 +474,27 @@ int set_ruri(struct sip_msg* msg, str* uri);
  * Make a private copy of the string and assign it to dst_uri
  */
 int set_dst_uri(struct sip_msg* msg, str* uri);
+
+
+void reset_dst_uri(struct sip_msg *msg);
+
+
+int set_dst_host_port(struct sip_msg *msg, str *host, str *port);
+
+
+enum rw_ruri_part {
+	RW_RURI_HOST = 1,
+	RW_RURI_HOSTPORT,
+	RW_RURI_USER,
+	RW_RURI_USERPASS,
+	RW_RURI_PORT,
+	RW_RURI_PREFIX,
+	RW_RURI_STRIP,
+	RW_RURI_STRIP_TAIL
+};
+
+int rewrite_ruri(struct sip_msg *msg, str *sval, int ival,
+				enum rw_ruri_part part);
 
 
 /*

@@ -81,13 +81,14 @@ Chapter 1. Admin Guide
    external xml file (see the framework parameter). An example of
    a framework xml file is provided inside the examples directory
    of the pi_http module. A simple framework file can be generated
-   by the opensipsdbctl command:
-opensipsdbctl pframework create
+   by the opensips-cli command:
+opensips-cli pframework create
 
    The generated framework will be saved inside OpenSIPS's config
    directory as pi_framework_sample. The list of configurable
-   tables will be based on the STANDARD_MODULES and EXTRA_MODULES
-   vars from opensipsctlrc file.
+   tables will be based on the "database_modules" setting of
+   opensips-cli.cfg if present, otherwise a default set of
+   configurable tables will be used.
 
 1.3. Framework
 
@@ -260,7 +261,7 @@ modparam("pi_http", "pi_http_method", 1)
    Parameters: none
 
    MI FIFO Command Format:
-opensipsctl fifo pi_reload_tbls_and_cmds
+opensips-cli -x mi pi_reload_tbls_and_cmds
 
 Chapter 2. Contributors
 
@@ -270,12 +271,12 @@ Chapter 2. Contributors
    commits^(2) and lines added/removed^(3)
      Name DevScore Commits Lines ++ Lines --
    1. Ovidiu Sas (@ovidiusas) 70 31 4389 206
-   2. Liviu Chircu (@liviuchircu) 12 10 33 49
-   3. Razvan Crainea (@razvancrainea) 9 7 26 29
-   4. Ionut Ionita (@ionutrazvanionita) 4 2 53 28
-   5. Vlad Paiu (@vladpaiu) 4 2 5 2
-   6. Vlad Patrascu (@rvlad-patrascu) 4 2 2 2
-   7. Bogdan-Andrei Iancu (@bogdan-iancu) 4 2 2 1
+   2. Liviu Chircu (@liviuchircu) 13 11 37 53
+   3. Razvan Crainea (@razvancrainea) 12 10 29 30
+   4. Vlad Patrascu (@rvlad-patrascu) 6 4 21 19
+   5. Bogdan-Andrei Iancu (@bogdan-iancu) 6 4 5 2
+   6. Ionut Ionita (@ionutrazvanionita) 4 2 53 28
+   7. Vlad Paiu (@vladpaiu) 4 2 5 2
    8. Peter Lemenkov (@lemenkov) 3 1 1 1
 
    (1) DevScore = author_commits + author_lines_added /
@@ -298,13 +299,13 @@ Chapter 2. Contributors
 
    Table 2.2. Most recently active contributors^(1) to this module
                      Name                   Commit Activity
-   1. Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
-   2. Liviu Chircu (@liviuchircu)         Mar 2014 - Jun 2018
-   3. Vlad Patrascu (@rvlad-patrascu)     May 2017 - May 2018
-   4. Razvan Crainea (@razvancrainea)     Aug 2015 - Mar 2017
-   5. Ionut Ionita (@ionutrazvanionita)   Nov 2015 - Jan 2017
-   6. Ovidiu Sas (@ovidiusas)             Oct 2012 - Apr 2016
-   7. Bogdan-Andrei Iancu (@bogdan-iancu) Jan 2013 - Oct 2014
+   1. Razvan Crainea (@razvancrainea)     Aug 2015 - Aug 2019
+   2. Liviu Chircu (@liviuchircu)         Mar 2014 - May 2019
+   3. Bogdan-Andrei Iancu (@bogdan-iancu) Jan 2013 - Apr 2019
+   4. Vlad Patrascu (@rvlad-patrascu)     May 2017 - Jan 2019
+   5. Peter Lemenkov (@lemenkov)          Jun 2018 - Jun 2018
+   6. Ionut Ionita (@ionutrazvanionita)   Nov 2015 - Jan 2017
+   7. Ovidiu Sas (@ovidiusas)             Oct 2012 - Apr 2016
    8. Vlad Paiu (@vladpaiu)               May 2013 - May 2013
 
    (1) including any documentation-related commits, excluding
@@ -314,9 +315,10 @@ Chapter 3. Documentation
 
 3.1. Contributors
 
-   Last edited by: Peter Lemenkov (@lemenkov), Liviu Chircu
-   (@liviuchircu), Vlad Patrascu (@rvlad-patrascu), Ovidiu Sas
-   (@ovidiusas), Bogdan-Andrei Iancu (@bogdan-iancu).
+   Last edited by: Liviu Chircu (@liviuchircu), Razvan Crainea
+   (@razvancrainea), Peter Lemenkov (@lemenkov), Vlad Patrascu
+   (@rvlad-patrascu), Ovidiu Sas (@ovidiusas), Bogdan-Andrei Iancu
+   (@bogdan-iancu).
 
    Documentation Copyrights:
 

@@ -112,9 +112,9 @@ static inline int pre_print_uac_request( struct cell *t, int branch,
 	/* copy path vector into branch */
 	if (request->path_vec.len) {
 		t->uac[branch].path_vec.s =
-			shm_resize(t->uac[branch].path_vec.s, request->path_vec.len+1);
+			shm_realloc(t->uac[branch].path_vec.s, request->path_vec.len+1);
 		if (t->uac[branch].path_vec.s==NULL) {
-			LM_ERR("shm_resize failed\n");
+			LM_ERR("shm_realloc failed\n");
 			goto error;
 		}
 		t->uac[branch].path_vec.len = request->path_vec.len;
@@ -124,10 +124,10 @@ static inline int pre_print_uac_request( struct cell *t, int branch,
 
 	/* do the same for the advertised port & address */
 	if (request->set_global_address.len) {
-		t->uac[branch].adv_address.s = shm_resize(t->uac[branch].adv_address.s,
+		t->uac[branch].adv_address.s = shm_realloc(t->uac[branch].adv_address.s,
 			request->set_global_address.len+1);
 		if (t->uac[branch].adv_address.s==NULL) {
-			LM_ERR("shm_resize failed for storing the advertised address "
+			LM_ERR("shm_realloc failed for storing the advertised address "
 				"(len=%d)\n",request->set_global_address.len);
 			goto error;
 		}
@@ -136,10 +136,10 @@ static inline int pre_print_uac_request( struct cell *t, int branch,
 			request->set_global_address.len+1);
 	}
 	if (request->set_global_port.len) {
-		t->uac[branch].adv_port.s = shm_resize(t->uac[branch].adv_port.s,
+		t->uac[branch].adv_port.s = shm_realloc(t->uac[branch].adv_port.s,
 			request->set_global_port.len+1);
 		if (t->uac[branch].adv_port.s==NULL) {
-			LM_ERR("shm_resize failed for storing the advertised port "
+			LM_ERR("shm_realloc failed for storing the advertised port "
 				"(len=%d)\n",request->set_global_port.len);
 			goto error;
 		}
@@ -184,7 +184,7 @@ static inline int pre_print_uac_request( struct cell *t, int branch,
 		swap_route_type( backup_route_type, BRANCH_ROUTE);
 
 		_tm_branch_index = branch;
-		if (run_top_route(branch_rlist[t->on_branch].a, request)&ACT_FL_DROP) {
+		if(run_top_route(sroutes->branch[t->on_branch].a,request)&ACT_FL_DROP){
 			LM_DBG("dropping branch <%.*s>\n", request->new_uri.len,
 					request->new_uri.s);
 			_tm_branch_index = 0;
@@ -209,9 +209,9 @@ static inline int pre_print_uac_request( struct cell *t, int branch,
 	/* copy dst_uri into branch (after branch route possible updated it) */
 	if (request->dst_uri.len) {
 		t->uac[branch].duri.s =
-			shm_resize(t->uac[branch].duri.s, request->dst_uri.len);
+			shm_realloc(t->uac[branch].duri.s, request->dst_uri.len);
 		if (t->uac[branch].duri.s==NULL) {
-			LM_ERR("shm_resize failed\n");
+			LM_ERR("shm_realloc failed\n");
 			goto error;
 		}
 		t->uac[branch].duri.len = request->dst_uri.len;
@@ -474,17 +474,9 @@ error01:
 		/* destroy all the bavps added, the path vector and the destination,
 		 * since this branch will never be properly added to
 		 * the UAC list, otherwise we'll have memory leaks - razvanc */
-		if (t->uac[branch].user_avps)
-			destroy_avp_list(&t->uac[branch].user_avps);
-		if (t->uac[branch].path_vec.s)
-			shm_free(t->uac[branch].path_vec.s);
-		if (t->uac[branch].adv_address.s)
-			shm_free(t->uac[branch].adv_address.s);
-		if (t->uac[branch].adv_port.s)
-			shm_free(t->uac[branch].adv_port.s);
-		if (t->uac[branch].duri.s)
-			shm_free(t->uac[branch].duri.s);
-		memset(&t->uac[branch],0,sizeof(t->uac[branch]));
+		clean_branch(t->uac[branch]);
+		memset(&t->uac[branch], 0, sizeof(t->uac[branch]));
+		init_branch(&t->uac[branch], branch, t->wait_tl.set, t);
 	}
 error:
 	return ret;
@@ -570,16 +562,9 @@ int t_set_reason(struct sip_msg *msg, str *val)
 }
 
 
-int t_add_reason(struct sip_msg *msg, char *val)
+int t_add_reason(struct sip_msg *msg, str *reason)
 {
-	str reason;
-
-	if (fixup_get_svalue(msg, (gparam_p)val, &reason)!=0) {
-		LM_ERR("invalid reason value\n");
-		return -1;
-	}
-
-	return t_set_reason(msg, &reason);
+	return t_set_reason(msg, reason);
 }
 
 void get_cancel_reason(struct sip_msg *msg, int flags, str *reason)
@@ -636,8 +621,12 @@ void cancel_invite(struct sip_msg *cancel_msg,
 
 	get_cancel_reason(cancel_msg, t_cancel->flags, &reason);
 
+	LOCK_REPLIES(t_invite);
+	/* we need to check which branches should be canceled under lock to avoid
+	 * concurrency with replies that are coming in the same time */
 	/* generate local cancels for all branches */
 	which_cancel(t_invite, &cancel_bitmap );
+	UNLOCK_REPLIES(t_invite);
 
 	set_cancel_extra_hdrs( reason.s, reason.len);
 	cancel_uacs(t_invite, cancel_bitmap );
@@ -809,6 +798,14 @@ int t_forward_nonack( struct cell *t, struct sip_msg* p_msg ,
 			if (t->uac[i].br_flags & tcp_no_new_conn_bflag)
 				tcp_no_new_conn = 1;
 
+			/* successfully sent out -> run callbacks */
+			if ( has_tran_tmcbs( t, TMCB_REQUEST_BUILT) ) {
+				set_extra_tmcb_params( &t->uac[i].request.buffer,
+					&t->uac[i].request.dst);
+				run_trans_callbacks( TMCB_REQUEST_BUILT, t,
+					p_msg, 0, 0);
+			}
+
 			do {
 				if (check_blacklists( t->uac[i].request.dst.proto,
 				&t->uac[i].request.dst.to,
@@ -817,6 +814,8 @@ int t_forward_nonack( struct cell *t, struct sip_msg* p_msg ,
 					LM_DBG("blocked by blacklists\n");
 					ser_error=E_IP_BLOCKED;
 				} else {
+					set_extra_tmcb_params( &t->uac[i].request.buffer,
+							&t->uac[i].request.dst);
 					run_trans_callbacks(TMCB_PRE_SEND_BUFFER, t, p_msg, 0, i);
 
 					if (SEND_BUFFER( &t->uac[i].request)==0) {
@@ -853,10 +852,10 @@ int t_forward_nonack( struct cell *t, struct sip_msg* p_msg ,
 			set_kr(REQ_FWDED);
 
 			/* successfully sent out -> run callbacks */
-			if ( has_tran_tmcbs( t, TMCB_REQUEST_BUILT|TMCB_MSG_SENT_OUT) ) {
+			if ( has_tran_tmcbs( t, TMCB_MSG_SENT_OUT) ) {
 				set_extra_tmcb_params( &t->uac[i].request.buffer,
 					&t->uac[i].request.dst);
-				run_trans_callbacks( TMCB_REQUEST_BUILT|TMCB_MSG_SENT_OUT, t,
+				run_trans_callbacks( TMCB_MSG_SENT_OUT, t,
 					p_msg, 0, 0);
 			}
 

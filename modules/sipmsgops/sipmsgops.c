@@ -17,35 +17,6 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
  *
- *
- * History:
- * -------
- *  2003-02-28  scratchpad compatibility abandoned (jiri)
- *  2003-01-29: - rewriting actions (replace, search_append) now begin
- *                at the second line -- previously, they could affect
- *                first line too, which resulted in wrong calculation of
- *                forwarded requests and an error consequently
- *              - replace_all introduced
- *  2003-01-28  scratchpad removed (jiri)
- *  2003-01-18  append_urihf introduced (jiri)
- *  2003-03-10  module export interface updated to the new format (andrei)
- *  2003-03-16  flags export parameter added (janakj)
- *  2003-03-19  replaced all mallocs/frees w/ pkg_malloc/pkg_free (andrei)
- *  2003-04-97  actions permitted to be used from failure/reply routes (jiri)
- *  2003-04-21  remove_hf and is_present_hf introduced (jiri)
- *  2003-08-19  subst added (support for sed like res:s/re/repl/flags) (andrei)
- *  2003-08-20  subst_uri added (like above for uris) (andrei)
- *  2003-09-11  updated to new build_lump_rpl() interface (bogdan)
- *  2003-11-11: build_lump_rpl() removed, add_lump_rpl() has flags (bogdan)
- *  2004-05-09: append_time introduced (jiri)
- *  2004-07-06  subst_user added (like subst_uri but only for user) (sobomax)
- *  2004-11-12  subst_user changes (old serdev mails) (andrei)
- *  2005-07-05  is_method("name") to check method using id (ramona)
- *  2006-03-17  applied patch from Marc Haisenko <haisenko@comdasys.com>
- *              for adding has_body() function (bogdan)
- *  2009-07-23  added methods for sdp codec manipulation(andreidragus)
- *  2012-02-21  add change_reply_status (idea from kamailio/textopsx) (rpedraza)
- *
  */
 
 
@@ -84,6 +55,7 @@
 
 #include "codecs.h"
 #include "list_hdr.h"
+#include "uri.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,8 +66,6 @@
 #include <sys/time.h>
 #include <fnmatch.h>
 
-
-static str header_body = {0, 0};
 
 /* RFC822-conforming dates format:
 
@@ -109,180 +79,211 @@ static str header_body = {0, 0};
 #define AUDIO_STR "audio"
 #define AUDIO_STR_LEN 5
 
-static int remove_hf_f(struct sip_msg* msg, char* str_hf, char* foo);
-static int remove_hf_match_f(struct sip_msg* msg, char* pattern, char* foo);
-static int is_present_hf_f(struct sip_msg* msg, char* str_hf, char* foo);
-static int append_to_reply_f(struct sip_msg* msg, char* key, char* str);
-static int append_hf_1(struct sip_msg* msg, char* str1, char* str2);
-static int append_hf_2(struct sip_msg* msg, char* str1, char* str2);
-static int insert_hf_1(struct sip_msg* msg, char* str1, char* str2);
-static int insert_hf_2(struct sip_msg* msg, char* str1, char* str2);
-static int append_urihf(struct sip_msg* msg, char* str1, char* str2);
+static int remove_hf(struct sip_msg* msg, int_str_t* hf);
+static int remove_hf_re(struct sip_msg* msg, regex_t* re);
+static int remove_hf_glob(struct sip_msg* msg, str* pattern);
+static int remove_hf_match_f(struct sip_msg* msg, void* pattern, int is_regex);
+static int is_present_hf(struct sip_msg* msg, void* _match_hf);
+static int append_to_reply_f(struct sip_msg* msg, str* key);
+static int append_hf(struct sip_msg *msg, str *str1, void *str2);
+static int insert_hf(struct sip_msg *msg, str *str1, void *str2);
+static int append_urihf(struct sip_msg *msg, str *str1, str *str2);
 static int append_time_f(struct sip_msg* msg, char* , char *);
-static int is_method_f(struct sip_msg* msg, char* , char *);
-static int has_body_f(struct sip_msg *msg, char *type, char *str2 );
-static int is_privacy_f(struct sip_msg *msg, char *privacy, char *str2 );
-static int remove_body_part_f(struct sip_msg *msg, char *str1, char *str2 );
-static int add_body_part_f(struct sip_msg *msg, char *str1, char *str2,
-	char *str3 );
-static int is_audio_on_hold_f(struct sip_msg *msg, char *str1, char *str2 );
-static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result);
+static int is_method_f(struct sip_msg *msg, void *meth);
+static int has_body_f(struct sip_msg *msg, void *type);
+static int is_privacy_f(struct sip_msg *msg, void *privacy);
+static int remove_body_part_f(struct sip_msg *msg, void *type, void *revert);
+static int add_body_part_f(struct sip_msg *msg, str *body, str *mime,
+                           str *extra_hdrs);
+static int is_audio_on_hold_f(struct sip_msg *msg);
+static int w_sip_validate(struct sip_msg *msg, void *flags, pv_spec_t* err_txt);
 
-static int hname_fixup(void** param, int param_no);
-static int free_hname_fixup(void** param, int param_no);
-static int hname_match_fixup(void** param, int param_no);
-static int free_hname_match_fixup(void** param, int param_no);
+static int fixup_parse_hname(void** param);
 
-static int fixup_method(void** param, int param_no);
-static int add_header_fixup(void** param, int param_no);
-static int fixup_body_type(void** param, int param_no);
-static int fixup_privacy(void** param, int param_no);
-static int fixup_sip_validate(void** param, int param_no);
+static int fixup_method(void** param);
+static int fixup_mime_type(void** param);
+static int fixup_revert(void** param);
+static int fixup_privacy(void** param);
+static int fixup_validate_fl(void** param);
 
-static int hl_opt_fixup(void** param, int param_no);
-static int list_hdr_has_option(struct sip_msg*, char*, char *);
-static int list_hdr_add_option(struct sip_msg*, char*, char *);
-static int list_hdr_remove_option(struct sip_msg*, char*, char *);
+static int list_hdr_has_option(struct sip_msg *msg, void *hdr, str *option);
+static int list_hdr_add_option(struct sip_msg *msg, void *hdr, str *option);
+static int list_hdr_remove_option(struct sip_msg *msg, void *hdr, str *option);
 
-static int change_reply_status_f(struct sip_msg*, char*, char *);
-static int change_reply_status_fixup(void** param, int param_no);
+static int change_reply_status_f(struct sip_msg* msg, int* code, str* reason);
 
 static int mod_init(void);
 
-
 static cmd_export_t cmds[]={
-	{"append_to_reply",  (cmd_function)append_to_reply_f, 1,
-		fixup_spve_null, 0,
+	{"append_to_reply",  (cmd_function)append_to_reply_f, {
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|ERROR_ROUTE},
-	{"append_hf",        (cmd_function)append_hf_1,       1,
-		add_header_fixup, 0,
+
+	{"append_hf",        (cmd_function)append_hf, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, fixup_parse_hname, fixup_free_pkg},
+		{0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"append_hf",        (cmd_function)append_hf_2,       2,
-		add_header_fixup, 0,
+
+	{"insert_hf",        (cmd_function)insert_hf, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, fixup_parse_hname, fixup_free_pkg},
+		{0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"insert_hf",        (cmd_function)insert_hf_1,       1,
-		add_header_fixup, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"insert_hf",        (cmd_function)insert_hf_2,       2,
-		add_header_fixup, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"append_urihf",     (cmd_function)append_urihf,      2,
-		fixup_str_str, fixup_free_str_str,
+
+	{"append_urihf",     (cmd_function)append_urihf, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE},
-	{"remove_hf",        (cmd_function)remove_hf_f,       1,
-		hname_fixup, free_hname_fixup,
+
+	{"remove_hf",        (cmd_function)remove_hf, {
+		{CMD_PARAM_STR, fixup_parse_hname, fixup_free_pkg}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"remove_hf",        (cmd_function)remove_hf_match_f,  2,
-		hname_match_fixup, free_hname_match_fixup,
+
+	{"remove_hf_re",     (cmd_function)remove_hf_re, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"is_present_hf",    (cmd_function)is_present_hf_f,   1,
-		hname_fixup, free_hname_fixup,
+
+	{"remove_hf_glob",   (cmd_function)remove_hf_glob, {
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"append_time",      (cmd_function)append_time_f,     0,
-		0, 0,
+
+	{"is_present_hf",    (cmd_function)is_present_hf, {
+		{CMD_PARAM_STR, fixup_parse_hname, fixup_free_pkg}, {0, 0, 0}},
+		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
+
+	{"append_time",      (cmd_function)append_time_f, {{0, 0, 0}},
 		REQUEST_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE },
-	{"is_method",        (cmd_function)is_method_f,       1,
-		fixup_method, 0,
+
+	{"is_method",        (cmd_function)is_method_f, {
+		{CMD_PARAM_STR, fixup_method, fixup_free_pkg}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"has_body",         (cmd_function)has_body_f,        0,
-		0, 0,
+
+	{"has_body",         (cmd_function)has_body_f, {
+		{CMD_PARAM_STR|CMD_PARAM_OPT, fixup_mime_type, 0},
+		{0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"has_body_part",    (cmd_function)has_body_f,        0,
-		0, 0,
+
+	{"has_body_part",    (cmd_function)has_body_f, {
+		{CMD_PARAM_STR|CMD_PARAM_OPT, fixup_mime_type, 0},
+		{0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"has_body",         (cmd_function)has_body_f,        1,
-		fixup_body_type, 0,
+
+	{"is_privacy",       (cmd_function)is_privacy_f, {
+		{CMD_PARAM_STR, fixup_privacy, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"has_body_part",    (cmd_function)has_body_f,        1,
-		fixup_body_type, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"is_privacy",       (cmd_function)is_privacy_f,      1,
-		fixup_privacy, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"remove_body_part", (cmd_function)remove_body_part_f,0,
-		0, 0,
+
+	{"remove_body_part", (cmd_function)remove_body_part_f, {
+		{CMD_PARAM_STR|CMD_PARAM_OPT, fixup_mime_type, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, fixup_revert, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE },
-	{"remove_body_part", (cmd_function)remove_body_part_f,1,
-		fixup_body_type, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE },
-	{"remove_body_part", (cmd_function)remove_body_part_f,2,
-		fixup_body_type, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE },
-	{"add_body_part",    (cmd_function)add_body_part_f,   2,
-		add_header_fixup, 0,
+
+	{"add_body_part",    (cmd_function)add_body_part_f, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"add_body_part",    (cmd_function)add_body_part_f,   3,
-		add_header_fixup, 0,
+
+	{"codec_exists",	(cmd_function)codec_find, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_exists",	(cmd_function)codec_find,	1,
-		fixup_codec,0,
+
+	{"codec_exists_re",	(cmd_function)codec_find_re, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_exists_re",	(cmd_function)codec_find_re,	1,
-		fixup_codec_regexp, 0,
+
+	{"codec_delete",	(cmd_function)codec_delete,	{
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_exists",	(cmd_function)codec_find_clock,	2,
-		fixup_codec,0,
+
+	{"codec_delete_re",	(cmd_function)codec_delete_re, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_delete",	(cmd_function)codec_delete,	1,
-		fixup_codec,0,
+
+	{"codec_delete_except_re",	(cmd_function)codec_delete_except_re, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_delete_re",	(cmd_function)codec_delete_re,	1,
-		fixup_codec_regexp, 0,
+
+	{"codec_move_up",	(cmd_function)codec_move_up, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_delete_except_re",	(cmd_function)codec_delete_except_re,	1,
-		fixup_codec_regexp, 0,
+
+	{"codec_move_up_re",	(cmd_function)codec_move_up_re, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_delete",	(cmd_function)codec_delete_clock, 2,
-		fixup_codec,0,
+
+	{"codec_move_down",	(cmd_function)codec_move_down, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_move_up",	(cmd_function)codec_move_up, 1,
-		fixup_codec,0,
+
+	{"codec_move_down_re",	(cmd_function)codec_move_down_re, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_move_up_re",	(cmd_function)codec_move_up_re, 1,
-		fixup_codec_regexp,0,
+
+	{"is_audio_on_hold",    (cmd_function)is_audio_on_hold_f, {{0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_move_up",	(cmd_function)codec_move_up_clock, 2,
-		fixup_codec,0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_move_down",	(cmd_function)codec_move_down,	1,
-		fixup_codec,0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_move_down_re",	(cmd_function)codec_move_down_re,	1,
-		fixup_codec_regexp,0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"codec_move_down",	(cmd_function)codec_move_down_clock,	2,
-		fixup_codec,0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"is_audio_on_hold",    (cmd_function)is_audio_on_hold_f,       0,
-		0, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"sipmsg_validate",     (cmd_function)w_sip_validate,       0,
-		0, 0,
+
+	{"sipmsg_validate",     (cmd_function)w_sip_validate, {
+		{CMD_PARAM_STR|CMD_PARAM_OPT, fixup_validate_fl, 0},
+		{CMD_PARAM_VAR|CMD_PARAM_OPT, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE},
-	{"sipmsg_validate",     (cmd_function)w_sip_validate,       1,
-		fixup_sip_validate, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE},
-	{"sipmsg_validate",     (cmd_function)w_sip_validate,       2,
-		fixup_sip_validate, 0,
-		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE},
-	{"change_reply_status", (cmd_function)change_reply_status_f, 2,
-		change_reply_status_fixup, 0, ONREPLY_ROUTE },
-	{"stream_exists",	(cmd_function)stream_find,               1,
-		fixup_regexp_dynamic_null,0,
+
+	{"change_reply_status", (cmd_function)change_reply_status_f, {
+		{CMD_PARAM_INT, 0, 0},
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
+		ONREPLY_ROUTE },
+
+	{"stream_exists",	(cmd_function)stream_find, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"stream_delete",	(cmd_function)stream_delete,             1,
-		fixup_regexp_dynamic_null,0,
+
+	{"stream_delete",	(cmd_function)stream_delete, {
+		{CMD_PARAM_REGEX, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"list_hdr_has_option", (cmd_function)list_hdr_has_option,   2,
-		hl_opt_fixup, NULL,
+
+	{"list_hdr_has_option", (cmd_function)list_hdr_has_option, {
+		{CMD_PARAM_STR, fixup_parse_hname, fixup_free_pkg},
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"list_hdr_add_option", (cmd_function)list_hdr_add_option,   2,
-		hl_opt_fixup, NULL,
+
+	{"list_hdr_add_option", (cmd_function)list_hdr_add_option, {
+		{CMD_PARAM_STR, fixup_parse_hname, fixup_free_pkg},
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{"list_hdr_remove_option", (cmd_function)list_hdr_remove_option,   2,
-		hl_opt_fixup, NULL,
+
+	{"list_hdr_remove_option", (cmd_function)list_hdr_remove_option, {
+		{CMD_PARAM_STR, fixup_parse_hname, fixup_free_pkg},
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
 		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{0,0,0,0,0,0}
+
+	{"has_totag", (cmd_function)has_totag, {{0, 0, 0}},
+		REQUEST_ROUTE|ONREPLY_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
+
+	{"ruri_has_param", (cmd_function)ruri_has_param, {
+		{CMD_PARAM_STR, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0, 0, 0}},
+		REQUEST_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
+
+	{"ruri_add_param", (cmd_function)ruri_add_param, {
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
+		REQUEST_ROUTE|FAILURE_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
+
+	{"ruri_del_param", (cmd_function)ruri_del_param, {
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
+		REQUEST_ROUTE},
+
+	{"ruri_tel2sip", (cmd_function)ruri_tel2sip, {{0, 0, 0}},
+		REQUEST_ROUTE},
+
+	{"is_uri_user_e164", (cmd_function)is_uri_user_e164, {
+		{CMD_PARAM_STR, 0, 0}, {0, 0, 0}},
+		REQUEST_ROUTE|FAILURE_ROUTE|LOCAL_ROUTE},
+
+	{0,0,{{0,0,0}},0}
 };
 
 
@@ -291,7 +292,9 @@ struct module_exports exports= {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	0,				 /* load function */
 	NULL,            /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	0,          /* module parameters */
@@ -304,57 +307,13 @@ struct module_exports exports= {
 	0,          /* response function */
 	0,          /* destroy function */
 	0,          /* per-child init function */
+	0           /* reload confirm function */
 };
 
 
 static int mod_init(void)
 {
 	LM_INFO("initializing...\n");
-	return 0;
-}
-
-
-int get_pvs_header_value(struct sip_msg *msg, gparam_p gp, pv_value_p ret)
-{
-	struct hdr_field hdr;
-	int hdr_len;
-
-	if (fixup_get_svalue(msg, gp, &ret->rs) != 0) {
-		LM_ERR("failed to get the string value\n");
-		return -1;
-	}
-
-	hdr_len = ret->rs.len + 1;
-	if (header_body.len < hdr_len)
-	{
-		header_body.s = pkg_realloc(header_body.s, hdr_len);
-		if (!header_body.s)
-		{
-			LM_ERR("PKG MEMORY depleted!\n");
-			return E_OUT_OF_MEM;
-		}
-
-		header_body.len = hdr_len;
-	}
-
-	memcpy(header_body.s, ret->rs.s, ret->rs.len);
-	header_body.s[ret->rs.len] = ':';
-
-	LM_DBG("Parsing %.*s\n", hdr_len, header_body.s);
-	if (parse_hname2(header_body.s, header_body.s + hdr_len, &hdr) == 0)
-	{
-		LM_ERR("error parsing header name '%.*s'\n", ret->rs.len, ret->rs.s);
-		return E_UNSPEC;
-	}
-
-	if (hdr.type != HDR_OTHER_T && hdr.type != HDR_ERROR_T)
-	{
-		LM_DBG("using hdr type (%d) instead of <%.*s>\n",
-				hdr.type, ret->rs.len, ret->rs.s);
-		ret->flags = PV_VAL_INT;
-		ret->ri = hdr.type;
-	}
-
 	return 0;
 }
 
@@ -371,24 +330,23 @@ static int hf_already_removed(struct sip_msg* msg, unsigned int offset,
 	return 0;
 }
 
-static int remove_hf_f(struct sip_msg* msg, char* str_hf, char* foo)
+static int remove_hf_re(struct sip_msg* msg, regex_t* re)
+{
+	return remove_hf_match_f(msg, re, 1);
+}
+
+static int remove_hf_glob(struct sip_msg* msg, str* pattern)
+{
+	return remove_hf_match_f(msg, pattern, 0);
+}
+
+static int remove_hf(struct sip_msg* msg, int_str_t* rhf)
 {
 	struct hdr_field *hf;
 	struct lump* l;
 	int cnt;
-	pv_value_t pval;
 
 	cnt=0;
-
-	pval.flags = PV_VAL_NONE;
-
-	if (((gparam_p)str_hf)->type == GPARAM_TYPE_INT) {
-		pval.flags = PV_VAL_INT;
-		pval.ri = ((gparam_p)str_hf)->v.ival;
-	} else if (get_pvs_header_value(msg, (gparam_p)str_hf, &pval) != 0) {
-		LM_ERR("failed to get header value\n");
-		return -1;
-	}
 
 	/* we need to be sure we have seen all HFs */
 	if (parse_headers(msg, HDR_EOH_F, 0) < 0) {
@@ -400,16 +358,16 @@ static int remove_hf_f(struct sip_msg* msg, char* str_hf, char* foo)
 		/* for well known header names str_hf->s will be set to NULL
 		   during parsing of opensips.cfg and str_hf->len contains
 		   the header type */
-		if (pval.flags & PV_VAL_INT)
+		if (!rhf->is_str)
 		{
-			if (pval.ri != hf->type)
+			if (rhf->i != hf->type)
 				continue;
 		} else {
 			if (hf->type != HDR_OTHER_T)
 				continue;
-			if (hf->name.len != pval.rs.len)
+			if (hf->name.len != rhf->s.len)
 				continue;
-			if (strncasecmp(hf->name.s, pval.rs.s, hf->name.len) != 0)
+			if (strncasecmp(hf->name.s, rhf->s.s, hf->name.len) != 0)
 				continue;
 		}
 		/* check to see if the header was already removed */
@@ -426,15 +384,13 @@ static int remove_hf_f(struct sip_msg* msg, char* str_hf, char* foo)
 	return cnt==0 ? -1 : 1;
 }
 
-
-static int remove_hf_match_f(struct sip_msg* msg, char* pattern, char* regex_or_glob)
+static int remove_hf_match_f(struct sip_msg* msg, void* pattern, int is_regex)
 {
 	struct hdr_field *hf;
 	struct lump* l;
 	int cnt;
 	str* pat = (str*)pattern;
 	regex_t* re = (regex_t*)pattern;
-	char matchtype = *regex_or_glob;
 	regmatch_t pmatch;
 	char tmp;
 
@@ -448,7 +404,7 @@ static int remove_hf_match_f(struct sip_msg* msg, char* pattern, char* regex_or_
 	for (hf=msg->headers; hf; hf=hf->next) {
 		tmp = *(hf->name.s+hf->name.len);
 		*(hf->name.s+hf->name.len) = 0;
-		if( matchtype == 'g' ) { /* GLOB */
+		if (!is_regex) { /* GLOB */
 			#ifdef FNM_CASEFOLD
 			if(fnmatch(pat->s, hf->name.s, FNM_CASEFOLD) !=0 ){
 			#else
@@ -457,15 +413,13 @@ static int remove_hf_match_f(struct sip_msg* msg, char* pattern, char* regex_or_
 				*(hf->name.s+hf->name.len) = tmp;
 				continue;
 			}
-		} else if( matchtype == 'r' ){ /* REGEX */
+		} else { /* REGEX */
 			if(regexec(re, hf->name.s, 1, &pmatch, 0)!=0){
 				*(hf->name.s+hf->name.len) = tmp;
 				continue;
 			}
-		} else {
-			LM_ERR("Unknown match type. Supported types are r (regex) and g (glob)");
-			return -1;
 		}
+
 		*(hf->name.s+hf->name.len) = tmp;
 
 		/* check to see if the header was already removed */
@@ -482,20 +436,20 @@ static int remove_hf_match_f(struct sip_msg* msg, char* pattern, char* regex_or_
 	return cnt==0 ? -1 : 1;
 }
 
-
-static int is_present_hf_f(struct sip_msg* msg, char* str_hf, char* foo)
+static int is_present_hf(struct sip_msg* msg, void* _match_hf)
 {
+	int_str_t *match_hf = (int_str_t *)_match_hf;
 	struct hdr_field *hf;
 	pv_value_t pval;
 
 	memset(&pval, '\0', sizeof pval);
 
-	if (((gparam_p)str_hf)->type == GPARAM_TYPE_INT) {
+	if (!match_hf->is_str) {
 		pval.flags = PV_VAL_INT;
-		pval.ri = ((gparam_p)str_hf)->v.ival;
-	} else if (get_pvs_header_value(msg, (gparam_p)str_hf, &pval) != 0) {
-		LM_ERR("failed to get header value\n");
-		return -1;
+		pval.ri = match_hf->i;
+	} else {
+		pval.flags = PV_VAL_STR;
+		pval.rs = match_hf->s;
 	}
 
 	/* we need to be sure we have seen all HFs */
@@ -559,23 +513,9 @@ static int append_time_f(struct sip_msg* msg, char* p1, char *p2)
 }
 
 
-static int append_to_reply_f(struct sip_msg* msg, char* key, char* str0)
+static int append_to_reply_f(struct sip_msg* msg, str* key)
 {
-	str s0;
-
-	if(key==NULL)
-	{
-		LM_ERR("bad parameters\n");
-		return -1;
-	}
-
-	if(fixup_get_svalue(msg, (gparam_p)key, &s0)!=0)
-	{
-		LM_ERR("cannot print the format\n");
-		return -1;
-	}
-
-	if ( add_lump_rpl( msg, s0.s, s0.len, LUMP_RPL_HDR)==0 )
+	if ( add_lump_rpl( msg, key->s, key->len, LUMP_RPL_HDR)==0 )
 	{
 		LM_ERR("unable to add lump_rl\n");
 		return -1;
@@ -588,7 +528,7 @@ static int append_to_reply_f(struct sip_msg* msg, char* key, char* str0)
 /* add str1 to end of header or str1.r-uri.str2 */
 
 static int add_hf_helper(struct sip_msg* msg, str *str1, str *str2,
-		gparam_p hfval, int mode, gparam_p hfanc)
+		str *hfval, int mode, int_str_t *hfanc)
 {
 	struct lump* anchor;
 	struct hdr_field *hf;
@@ -602,18 +542,18 @@ static int add_hf_helper(struct sip_msg* msg, str *str1, str *str2,
 	}
 
 	hf = 0;
-	if(hfanc!=NULL) {
+	if(hfanc) {
 		for (hf=msg->headers; hf; hf=hf->next) {
-			if(hfanc->type==GPARAM_TYPE_INT)
+			if(!hfanc->is_str)
 			{
-				if (hfanc->v.ival!=hf->type)
+				if (hfanc->i!=hf->type)
 					continue;
 			} else {
 				if (hf->type!=HDR_OTHER_T)
 					continue;
-				if (hf->name.len!=hfanc->v.sval.len)
+				if (hf->name.len!=hfanc->s.len)
 					continue;
-				if (strncasecmp(hf->name.s,hfanc->v.sval.s,hf->name.len)!=0)
+				if (str_strcmp(&hf->name, &hfanc->s)!=0)
 					continue;
 			}
 			break;
@@ -643,11 +583,7 @@ static int add_hf_helper(struct sip_msg* msg, str *str1, str *str2,
 		s0 = *str1;
 	} else {
 		if(hfval) {
-			if(fixup_get_svalue(msg, hfval, &s0)!=0)
-			{
-				LM_ERR("cannot print the format\n");
-				return -1;
-			}
+			s0 = *hfval;
 		} else {
 			s0.len = 0;
 			s0.s   = 0;
@@ -677,38 +613,26 @@ static int add_hf_helper(struct sip_msg* msg, str *str1, str *str2,
 	return 1;
 }
 
-static int append_hf_1(struct sip_msg *msg, char *str1, char *str2 )
+static int append_hf(struct sip_msg *msg, str *str1, void *str2)
 {
-	return add_hf_helper(msg, 0, 0, (gparam_p)str1, 0, 0);
+	return add_hf_helper(msg, 0, 0, str1, 0, (int_str_t *)str2);
 }
 
-static int append_hf_2(struct sip_msg *msg, char *str1, char *str2 )
+static int insert_hf(struct sip_msg *msg, str *str1, void *str2)
 {
-	return add_hf_helper(msg, 0, 0, (gparam_p)str1, 0,
-			(gparam_p)str2);
+	return add_hf_helper(msg, 0, 0, str1, 1, (int_str_t *)str2);
 }
 
-static int insert_hf_1(struct sip_msg *msg, char *str1, char *str2 )
+static int append_urihf(struct sip_msg *msg, str *str1, str *str2)
 {
-	return add_hf_helper(msg, 0, 0, (gparam_p)str1, 1, 0);
+	return add_hf_helper(msg, str1, str2, 0, 0, 0);
 }
 
-static int insert_hf_2(struct sip_msg *msg, char *str1, char *str2 )
-{
-	return add_hf_helper(msg, 0, 0, (gparam_p)str1, 1,
-			(gparam_p)str2);
-}
-
-static int append_urihf(struct sip_msg *msg, char *str1, char *str2)
-{
-	return add_hf_helper(msg, (str*)str1, (str*)str2, 0, 0, 0);
-}
-
-static int is_method_f(struct sip_msg *msg, char *meth, char *str2 )
+static int is_method_f(struct sip_msg *msg, void *meth)
 {
 	str *m;
 
-	m = (str*)meth;
+	m = (str *)meth;
 	if(msg->first_line.type==SIP_REQUEST)
 	{
 		if(m->s==0)
@@ -734,149 +658,66 @@ static int is_method_f(struct sip_msg *msg, char *meth, char *str2 )
 }
 
 
-/*
- * Convert char* header_name to str* parameter
- */
-static int hname_fixup(void** param, int param_no)
+static int fixup_parse_hname(void** param)
 {
 	char *c;
 	int len;
 	struct hdr_field hdr;
-	gparam_p gp = NULL;
+	int_str_t *outval;
+	str *hn = (str *)*param;
 
-	if (fixup_sgp(param) != 0)
+	outval = pkg_malloc(sizeof *outval + hn->len + 1);
+	if (!outval) {
+		LM_ERR("oom\n");
+		return -1;
+	}
+	memset(outval, 0, sizeof *outval);
+
+	/* parse_hname2() accepts a minimum 4 bytes len buffer
+	 * for parsing, so whatever is the len of the header name,
+	 * fill it up to 4 */
+	len = (hn->len < 3) ? (4) : (hn->len + 1);
+	c = pkg_malloc( len );
+	if (!c)
+		return E_OUT_OF_MEM;
+
+	memcpy(c, hn->s, hn->len);
+	c[hn->len] = ':';
+
+	if (parse_hname2(c, c + len, &hdr) == 0)
 	{
-		LM_ERR("Fixup failed!\n");
-		return E_UNSPEC;
+		LM_ERR("error parsing header name\n");
+		goto err_free;
 	}
 
-	gp = (gparam_p)*param;
+	pkg_free(c);
 
-	if (gp->type == GPARAM_TYPE_STR)
+	if (hdr.type != HDR_OTHER_T && hdr.type != HDR_ERROR_T)
 	{
-		/* parse_hname2() accepts a minimum 4 bytes len buffer
-		 * for parsing, so whatever is the len of the header name,
-		 * fill it up to 4 */
-		len = (gp->v.sval.len<3) ? (4) : (gp->v.sval.len+1) ;
-		c = pkg_malloc( len );
-		if (!c)
-			return E_OUT_OF_MEM;
+		LM_DBG("using hdr type (%d) instead of <%.*s>\n",
+				hdr.type, hn->len, hn->s);
 
-		memcpy(c, gp->v.sval.s, gp->v.sval.len);
-		c[gp->v.sval.len] = ':';
-
-		if (parse_hname2(c, c + len, &hdr) == 0)
-		{
-			LM_ERR("error parsing header name\n");
-			return E_UNSPEC;
-		}
-
-		pkg_free(c);
-
-		if (hdr.type != HDR_OTHER_T && hdr.type != HDR_ERROR_T)
-		{
-			LM_DBG("using hdr type (%d) instead of <%.*s>\n",
-					hdr.type, gp->v.sval.len, gp->v.sval.s);
-
-			gp->type = GPARAM_TYPE_INT;
-			gp->v.ival = hdr.type;
-		}
+		outval->i = hdr.type;
+	} else {
+		outval->is_str = 1;
+		outval->s.s = (char *)(outval + 1);
+		memcpy(outval->s.s, hn->s, hn->len);
+		outval->s.len = hn->len;
+		outval->s.s[outval->s.len] = '\0';
 	}
 
+	*param = outval;
 	return 0;
-}
 
-static int free_hname_fixup(void** param, int param_no)
-{
-	if(*param)
-	{
-		if(((gparam_p)(*param))->type==GPARAM_TYPE_STR)
-			pkg_free(((gparam_p)(*param))->v.sval.s);
-		pkg_free(*param);
-		*param = 0;
-	}
-	return 0;
-}
-
-static int hname_match_fixup(void** param, int param_no)
-{
-	char * type_param = NULL;
-	char * type_str = NULL;
-	char type = 0;
-	char * matchstr = *(char**)param;
-
-	if(param_no == 1){
-		if(strlen(matchstr)==0){
-			LM_ERR("Empty match string parameter.\n");
-			return E_UNSPEC;
-		}
-		type_param = ((char*)param)+sizeof(action_elem_t);
-		if(!type_param){
-			LM_ERR("Unable to fetch the 2nd parameter\n");
-			return E_UNSPEC;
-		}
-
-		type_str = *((char**)type_param);
-		if(!type_str){
-			LM_ERR("Unable to access 2nd parameter value\n");
-			return E_UNSPEC;
-		}
-		type = *type_str;
-		if(type == 'r'){
-			/* regex fixup code here */
-			LM_DBG("processing param1: %s as regex\n", *(char**)param);
-			fixup_regexp_null(param, param_no);
-		}else if(type == 'g'){
-			/* glob fixup code here */
-			LM_DBG("processing param1: %s as glob\n", *(char**)param);
-			fixup_str(param);
-		}else{
-			LM_ERR("unknown match type '%c'\n", type);
-			return E_UNSPEC;
-		}
-	}
-	return 0;
-}
-
-
-static int free_hname_match_fixup(void** param, int param_no)
-{
-	char * type_param = NULL;
-	char * type_str = NULL;
-	char type = 0;
-
-	if(param_no == 1){
-		type_param = ((char*)param)+sizeof(action_elem_t);
-		if(!type_param){
-			LM_ERR("Unable to fetch the 2nd parameter\n");
-			return E_UNSPEC;
-		}
-		type_str = *((char**)type_param);
-		if(!type_str){
-			LM_ERR("Unable to access 2nd parameter value\n");
-			return E_UNSPEC;
-		}
-		type = *type_str;
-		if(type == 'r'){
-			/* regex fixup code here */
-			LM_DBG("Freeing regexp\n");
-			fixup_free_regexp_null(param, param_no);
-		}else if(type == 'g'){
-			/* glob fixup code here */
-			LM_DBG("Freeing glob\n");
-			fixup_free_str_str(param, param_no);
-		}else{
-			LM_ERR("unknown match type in free_hname_match_fixup. Please notify a developer.\n");
-		}
-	}
-
-	return 0;
+err_free:
+	pkg_free(outval);
+	return E_UNSPEC;
 }
 
 /*
  * Convert char* method to str* parameter
  */
-static int fixup_method(void** param, int param_no)
+static int fixup_method(void** param)
 {
 	str* s;
 	char *p;
@@ -889,8 +730,7 @@ static int fixup_method(void** param, int param_no)
 		return E_UNSPEC;
 	}
 
-	s->s = (char*)*param;
-	s->len = strlen(s->s);
+	*s = *(str *)*param;
 	if(s->len==0)
 	{
 		LM_ERR("empty method name\n");
@@ -919,8 +759,8 @@ static int fixup_method(void** param, int param_no)
 	{
 		if(method==METHOD_UNDEF || method&METHOD_OTHER)
 		{
-			LM_ERR("unknown method in list [%.*s/%d] - must be only defined methods\n",
-					s->len, s->s, method);
+			LM_ERR("unknown method in list [%.*s/%d] - must be "
+				"only defined methods\n", s->len, s->s, method);
 			return E_UNSPEC;
 		}
 		LM_DBG("using id for methods [%.*s/%d]\n",
@@ -946,20 +786,17 @@ static int fixup_method(void** param, int param_no)
 /*
  * Convert char* privacy value to corresponding bit value
  */
-static int fixup_privacy(void** param, int param_no)
+static int fixup_privacy(void** param)
 {
-	str p;
+	str *p = (str *)*param;
 	unsigned int val;
 
-	p.s = (char*)*param;
-	p.len = strlen(p.s);
-
-	if (p.len == 0) {
+	if (p->len == 0) {
 		LM_ERR("empty privacy value\n");
 		return E_UNSPEC;
 	}
 
-	if (parse_priv_value(p.s, p.len, &val) != p.len) {
+	if (parse_priv_value(p->s, p->len, &val) != p->len) {
 		LM_ERR("invalid privacy value\n");
 		return E_UNSPEC;
 	}
@@ -968,62 +805,50 @@ static int fixup_privacy(void** param, int param_no)
 	return 0;
 }
 
-static int add_header_fixup(void** param, int param_no)
-{
-	if(param_no==1)
-	{
-		return fixup_spve_null(param, param_no);
-	} else if(param_no==2) {
-		return hname_fixup(param, param_no);
-	} else if(param_no==3) {
-		return fixup_spve(param);
-	} else {
-		LM_ERR("wrong number of parameters\n");
-		return E_UNSPEC;
-	}
-}
-
-
-static int fixup_body_type(void** param, int param_no)
+static int fixup_mime_type(void** param)
 {
 	char *p;
 	char *r;
 	unsigned int type;
+	str *mime = (str *)*param;
 
-	if(param_no==1) {
-		p = (char*)*param;
-		if (p==0 || p[0]==0) {
-			type = 0;
-		} else {
-			r = decode_mime_type( p, p+strlen(p) , &type , NULL);
-			if (r==0) {
-				LM_ERR("unsupported mime <%s>\n",p);
-				return E_CFG;
-			}
-			if ( r!=p+strlen(p) ) {
-				LM_ERR("multiple mimes not supported!\n");
-				return E_CFG;
-			}
+	if (!mime)
+		return 0;
+
+	p = mime->s;
+
+	if (p==0 || p[0]==0) {
+		type = 0;
+	} else {
+		r = decode_mime_type( p, p + mime->len , &type , NULL);
+		if (r==0) {
+			LM_ERR("unsupported mime <%s>\n",p);
+			return E_CFG;
 		}
-		pkg_free(*param);
-		*param = (void*)(long)type;
-	} else if(param_no==2) {
-		/* only by remove_body_part() */
-		p = (char*)*param;
-		if (p && strcmp(p,"revert")==0) {
-			pkg_free(*param);
-			*param = (void*)(long)1;
-		} else {
-			pkg_free(*param);
-			*param = (void*)(long)0;
+		if ( r!=p + mime->len ) {
+			LM_ERR("multiple mimes not supported!\n");
+			return E_CFG;
 		}
 	}
-	return 0;
 
+	*param = (void*)(long)type;
+	return 0;
+}
+
+static int fixup_revert(void** param)
+{
+	str revert = str_init("revert");
+
+	if (!str_strcmp((str *)*param, &revert))
+		*param = (void *)(long)1;
+	else
+		*param = (void *)(long)0;
+
+	return 0;
 }
 
 
-static int has_body_f(struct sip_msg *msg, char *type, char *str2 )
+static int has_body_f(struct sip_msg *msg, void *type)
 {
 	struct body_part * p;
 
@@ -1068,17 +893,17 @@ static int has_body_f(struct sip_msg *msg, char *type, char *str2 )
 }
 
 
-static int is_privacy_f(struct sip_msg *msg, char *_privacy, char *str2 )
+static int is_privacy_f(struct sip_msg *msg, void *privacy)
 {
 	if (parse_privacy(msg) == -1)
 		return -1;
 
-	return get_privacy_values(msg) & ((unsigned int)(long)_privacy) ? 1 : -1;
+	return get_privacy_values(msg) & ((unsigned int)(long)privacy) ? 1 : -1;
 
 }
 
 
-static int remove_body_part_f(struct sip_msg *msg, char *type, char *revert )
+static int remove_body_part_f(struct sip_msg *msg, void *type, void *revert)
 {
 	struct sip_msg_body * b;
 	struct body_part * p;
@@ -1108,45 +933,24 @@ static int remove_body_part_f(struct sip_msg *msg, char *type, char *revert )
 /*
  *	Function to add a new body
  * */
-static int add_body_part_f(struct sip_msg *msg, char *nbody, char *ctype,
-															char *extra_hdrs)
+static int add_body_part_f(struct sip_msg *msg, str *body, str *mime,
+                           str *extra_hdrs)
 {
-	str body;
-	str mime;
-	str hdrs;
-
-	if(fixup_get_svalue(msg, (gparam_p)nbody, &body)!=0) {
-		LM_ERR("cannot print the format\n");
-		return -1;
-	}
-
-	if(body.s== NULL || body.len == 0) {
+	if (body->len == 0) {
 		LM_ERR("null body parameter\n");
 		return -1;
 	}
 
-	if(fixup_get_svalue(msg, (gparam_p)ctype, &mime)!=0) {
-		LM_ERR("cannot print the mime string\n");
-		return -1;
-	}
-
-	if(mime.s== NULL || mime.len == 0) {
+	if (mime->len == 0) {
 		LM_ERR("empty mime value\n");
 		return -1;
 	}
 
-	if (extra_hdrs) {
-		if(fixup_get_svalue(msg, (gparam_p)extra_hdrs, &hdrs)!=0) {
-			LM_ERR("cannot print the headers format\n");
-			return -1;
-		}
-		if (hdrs.s==NULL || hdrs.len==0)
-			extra_hdrs = NULL;
-	}
+	if (extra_hdrs && extra_hdrs->len == 0)
+		extra_hdrs = NULL;
 
-	if (add_body_part(msg, &mime, extra_hdrs?&hdrs:NULL, &body)==NULL) {
-		LM_ERR("failed to add new body part <%.*s>\n",
-			mime.len, mime.s);
+	if (!add_body_part(msg, mime, extra_hdrs, body)) {
+		LM_ERR("failed to add new body part <%.*s>\n", mime->len, mime->s);
 		return -1;
 	}
 
@@ -1154,7 +958,7 @@ static int add_body_part_f(struct sip_msg *msg, char *nbody, char *ctype,
 }
 
 
-static int is_audio_on_hold_f(struct sip_msg *msg, char *str1, char *str2 )
+static int is_audio_on_hold_f(struct sip_msg *msg)
 {
 	int sdp_session_num = 0, sdp_stream_num;
 	sdp_session_cell_t* sdp_session;
@@ -1191,77 +995,62 @@ static int is_audio_on_hold_f(struct sip_msg *msg, char *str1, char *str2 )
 #define SIP_PARSE_FROM 0x20
 #define SIP_PARSE_CONTACT 0x40
 
-static int fixup_sip_validate(void** param, int param_no)
+static int fixup_validate_fl(void** param)
 {
 	char *flags_s, *end;
 	unsigned long flags = 0;
-	pv_elem_t *pvar;
-	str s;
 
-	if (param_no==1) {
-		if (!param)
-			return -1;
-		flags_s = (char*)*param;
-		end = flags_s + strlen(flags_s);
-
-		for ( ; flags_s < end; flags_s++) {
-			switch (*flags_s) {
-				case 's':
-				case 'S':
-					flags |= SIP_PARSE_SDP;
-					break;
-
-				case 'h':
-				case 'H':
-					flags |= SIP_PARSE_HDR;
-					break;
-
-				case 'm':
-				case 'M':
-					flags |= SIP_PARSE_NOMF;
-					break;
-
-				case 'r':
-				case 'R':
-					flags |= SIP_PARSE_RURI;
-					break;
-
-				case 't':
-				case 'T':
-					flags |= SIP_PARSE_TO;
-					break;
-
-				case 'f':
-				case 'F':
-					flags |= SIP_PARSE_FROM;
-					break;
-
-				case 'c':
-				case 'C':
-					flags |= SIP_PARSE_CONTACT;
-					break;
-
-				default:
-					LM_DBG("unknown option \'%c\'\n", *flags_s);
-					break;
-			}
-		}
-		*param = (void *)(unsigned long)flags;
+	if (!*param)
 		return 0;
-	} else if (param_no==2) {
-		s.s = (char*)(*param);
-		s.len = strlen(s.s);
-		if (pv_parse_format(&s, &pvar)<0)
-		{
-			LM_ERR( "wrong format[%s]\n",(char*)(*param));
-			return E_UNSPEC;
+
+	flags_s = ((str *)*param)->s;
+	end = flags_s + ((str *)*param)->len;
+
+	for ( ; flags_s < end; flags_s++) {
+		switch (*flags_s) {
+			case 's':
+			case 'S':
+				flags |= SIP_PARSE_SDP;
+				break;
+
+			case 'h':
+			case 'H':
+				flags |= SIP_PARSE_HDR;
+				break;
+
+			case 'm':
+			case 'M':
+				flags |= SIP_PARSE_NOMF;
+				break;
+
+			case 'r':
+			case 'R':
+				flags |= SIP_PARSE_RURI;
+				break;
+
+			case 't':
+			case 'T':
+				flags |= SIP_PARSE_TO;
+				break;
+
+			case 'f':
+			case 'F':
+				flags |= SIP_PARSE_FROM;
+				break;
+
+			case 'c':
+			case 'C':
+				flags |= SIP_PARSE_CONTACT;
+				break;
+
+			default:
+				LM_DBG("unknown option \'%c\'\n", *flags_s);
+				break;
 		}
-		*param = (void*)pvar;
-		return 0;
-	} else {
-		LM_ERR("invalid parameter number %d\n", param_no);
-		return E_UNSPEC;
 	}
+
+	*param = (void *)(unsigned long)flags;
+	return 0;
 }
 
 static int sip_validate_hdrs(struct sip_msg *msg)
@@ -1579,6 +1368,159 @@ failed:
 	return -1;
 }
 
+
+static char _is_username_char[128] = {
+	0 /* 0 NUL */,
+	0 /* 1 SOH */,
+	0 /* 2 STX */,
+	0 /* 3 ETX */,
+	0 /* 4 EOT */,
+	0 /* 5 ENQ */,
+	0 /* 6 ACK */,
+	0 /* 7 BEL */,
+	0 /* 8 BS */,
+	0 /* 9 HT */,
+	0 /* 10 LF */,
+	0 /* 11 VT */,
+	0 /* 12 FF */,
+	0 /* 13 CR */,
+	0 /* 14 SO */,
+	0 /* 15 SI */,
+	0 /* 16 DLE */,
+	0 /* 17 DC1 */,
+	0 /* 18 DC2 */,
+	0 /* 19 DC3 */,
+	0 /* 20 DC4 */,
+	0 /* 21 NAK */,
+	0 /* 22 SYN */,
+	0 /* 23 ETB */,
+	0 /* 24 CAN */,
+	0 /* 25 EM */,
+	0 /* 26 SUB */,
+	0 /* 27 ESC */,
+	0 /* 28 FS */,
+	0 /* 29 GS */,
+	0 /* 30 RS */,
+	0 /* 31 US */,
+	0 /* 32   */,
+	1 /* 33 ! */,
+	0 /* 34 " */,
+	0 /* 35 # */,
+	1 /* 36 $ */,
+	0 /* 37 % */,
+	1 /* 38 & */,
+	1 /* 39 ' */,
+	0 /* 40 ( */,
+	0 /* 41 ) */,
+	1 /* 42 * */,
+	1 /* 43 + */,
+	1 /* 44 , */,
+	1 /* 45 - */,
+	1 /* 46 . */,
+	1 /* 47 / */,
+	1 /* 48 0 */,
+	1 /* 49 1 */,
+	1 /* 50 2 */,
+	1 /* 51 3 */,
+	1 /* 52 4 */,
+	1 /* 53 5 */,
+	1 /* 54 6 */,
+	1 /* 55 7 */,
+	1 /* 56 8 */,
+	1 /* 57 9 */,
+	0 /* 58 : */,
+	1 /* 59 ; */,
+	0 /* 60 < */,
+	1 /* 61 = */,
+	0 /* 62 > */,
+	1 /* 63 ? */,
+	0 /* 64 @ */,
+	1 /* 65 A */,
+	1 /* 66 B */,
+	1 /* 67 C */,
+	1 /* 68 D */,
+	1 /* 69 E */,
+	1 /* 70 F */,
+	1 /* 71 G */,
+	1 /* 72 H */,
+	1 /* 73 I */,
+	1 /* 74 J */,
+	1 /* 75 K */,
+	1 /* 76 L */,
+	1 /* 77 M */,
+	1 /* 78 N */,
+	1 /* 79 O */,
+	1 /* 80 P */,
+	1 /* 81 Q */,
+	1 /* 82 R */,
+	1 /* 83 S */,
+	1 /* 84 T */,
+	1 /* 85 U */,
+	1 /* 86 V */,
+	1 /* 87 W */,
+	1 /* 88 X */,
+	1 /* 89 Y */,
+	1 /* 90 Z */,
+	0 /* 91 [ */,
+	0 /* 92 \ */,
+	0 /* 93 ] */,
+	0 /* 94 ^ */,
+	1 /* 95 _ */,
+	0 /* 96 ` */,
+	1 /* 97 a */,
+	1 /* 98 b */,
+	1 /* 99 c */,
+	1 /* 100 d */,
+	1 /* 101 e */,
+	1 /* 102 f */,
+	1 /* 103 g */,
+	1 /* 104 h */,
+	1 /* 105 i */,
+	1 /* 106 j */,
+	1 /* 107 k */,
+	1 /* 108 l */,
+	1 /* 109 m */,
+	1 /* 110 n */,
+	1 /* 111 o */,
+	1 /* 112 p */,
+	1 /* 113 q */,
+	1 /* 114 r */,
+	1 /* 115 s */,
+	1 /* 116 t */,
+	1 /* 117 u */,
+	1 /* 118 v */,
+	1 /* 119 w */,
+	1 /* 120 x */,
+	1 /* 121 y */,
+	1 /* 122 z */,
+	0 /* 123 { */,
+	0 /* 124 | */,
+	0 /* 125 } */,
+	1 /* 126 ~ */,
+	0 /* 127 DEL */
+};
+
+static int check_username(str *username)
+{
+	int i;
+
+	if (!username)
+		return 0;
+
+	for( i=0 ; i<username->len ; i++ ) {
+		if (username->s[i]<0 || username->s[i]>127 ||
+		_is_username_char[ (int)username->s[i] ]==0) {
+			LM_DBG("invalid character %c[%d] in username <%.*s> on index %i\n",
+				username->s[i], username->s[i],
+				username->len, username->s, i);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+
 #define IS_ALPHANUM(_c) ( \
 		((_c) >= 'a' && (_c) <= 'z') || \
 		((_c) >= 'A' && (_c) <= 'Z') || \
@@ -1594,8 +1536,9 @@ static int check_hostname(str *domain)
 	}
 
 	/* always starts with a ALPHANUM */
-	if (!IS_ALPHANUM(domain->s[0])) {
-		LM_DBG("invalid starting character in domain: %c[%d]\n", domain->s[0], domain->s[0]);
+	if (!IS_ALPHANUM(domain->s[0]) && (domain->s[0] != '[')) {
+		LM_DBG("invalid starting character in domain: %c[%d]\n",
+			domain->s[0], domain->s[0]);
 		return -1;
 	}
 
@@ -1603,7 +1546,7 @@ static int check_hostname(str *domain)
 	end = domain->s + domain->len - 1;
 
 	for (p = domain->s + 1; p < end; p++) {
-		if (!IS_ALPHANUM(*p) && (*p != '-')) {
+		if (!IS_ALPHANUM(*p) && (*p != '-') && (*p != ':')) {
 			if (*p != '.') {
 				LM_DBG("invalid character in hostname: %c[%d]\n", *p, *p);
 				return -1;
@@ -1615,8 +1558,9 @@ static int check_hostname(str *domain)
 	}
 
 	/* check if the last character is a '-' */
-	if (!IS_ALPHANUM(*end) && (*end != '.')) {
-		LM_DBG("invalid character at the end of the domain: %c[%d]\n", *end, *end);
+	if (!IS_ALPHANUM(*end) && (*end != '.') && (*end != ']')) {
+		LM_DBG("invalid character at the end of the domain: %c[%d]\n",
+			*end, *end);
 		return -1;
 	}
 	return 0;
@@ -1662,12 +1606,16 @@ enum sip_validation_failures {
 	SV_FROM_PARSE_ERROR=-24,
 	SV_FROM_DOMAIN_ERROR=-25,
 	SV_CONTACT_PARSE_ERROR=-26,
+	SV_BAD_USERNAME=-27,
+	SV_FROM_USERNAME_ERROR=-28,
+	SV_TO_USERNAME_ERROR=-29,
 	SV_GENERIC_FAILURE=-255
 };
 
-static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
+static int w_sip_validate(struct sip_msg *msg, void *_flags, pv_spec_t* err_txt)
 {
 	unsigned int hdrs_len;
+	unsigned long flags = (unsigned long)_flags;
 	int method;
 	str body;
 	struct hdr_field * ptr;
@@ -1675,8 +1623,6 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 	struct sip_uri test_contacts;
 	struct cseq_body * cbody;
 	struct to_body *from, *to;
-	unsigned long flags;
-	pv_elem_t* pv_res = (pv_elem_t*)pv_result;
 	pv_value_t pv_val;
 	char reason[MAX_REASON];
 	int ret = -SV_GENERIC_FAILURE;
@@ -1703,16 +1649,15 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 
 	/* content length should be present if protocol is not UDP */
 	if (msg->rcv.proto != PROTO_UDP && !msg->content_length) {
-		snprintf(reason, MAX_REASON-1, "message doesn't have Content Length header for proto %d",
-				msg->rcv.proto);
+		snprintf(reason, MAX_REASON-1,
+			"message doesn't have Content Length header for proto %d",
+			msg->rcv.proto);
 		ret = SV_NO_CONTENT_LENGTH;
 		goto failed;
 	}
 
 	body.s = NULL;
 	body.len = 0;
-
-	flags = flags_s ? (unsigned long)(void*)flags_s : 0;
 
 	/* if not CANCEL, check if it has body */
 	if (msg->first_line.type!=SIP_REQUEST || msg->REQ_METHOD!=METHOD_CANCEL) {
@@ -1724,8 +1669,9 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 		}
 
 		if (get_content_length(msg) != body.len) {
-			snprintf(reason, MAX_REASON-1, "invalid body - content length %ld different than actual body %d",
-					get_content_length(msg), body.len);
+			snprintf(reason, MAX_REASON-1, "invalid body - content "
+				"length %ld different than actual body %d",
+				get_content_length(msg), body.len);
 			ret = SV_INVALID_CONTENT_LENGTH;
 			goto failed;
 		}
@@ -1785,6 +1731,11 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 			ret = SV_TO_DOMAIN_ERROR;
 			goto failed;
 		}
+		if(check_username(&to->parsed_uri.user) < 0) {
+			strcpy(reason, "invalid username for 'To' header");
+			ret = SV_TO_USERNAME_ERROR;
+			goto failed;
+		}
 	}
 
 	/* test from header uri */
@@ -1811,6 +1762,11 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 			ret = SV_FROM_DOMAIN_ERROR;
 			goto failed;
 		}
+		if (check_username(&from->parsed_uri.user) < 0) {
+			strcpy(reason, "invalid username for 'From' header");
+			ret = SV_FROM_USERNAME_ERROR;
+			goto failed;
+		}
 	}
 
 	/* request or reply */
@@ -1827,6 +1783,11 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 				if (check_hostname(&msg->parsed_uri.host) < 0) {
 					strcpy(reason, "invalid domain for R-URI");
 					ret = SV_BAD_HOSTNAME;
+					goto failed;
+				}
+				if (check_username(&msg->parsed_uri.user) < 0) {
+					strcpy(reason, "invalid username for R-URI");
+					ret = SV_BAD_USERNAME;
 					goto failed;
 				}
 			}
@@ -1952,8 +1913,9 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 		body.len = msg->buf + msg->len - body.s;
 
 		if (get_content_length(msg) != body.len) {
-			snprintf(reason, MAX_REASON-1, "invalid body - content length %ld different than "
-					"actual body %d\n", get_content_length(msg), body.len);
+			snprintf(reason, MAX_REASON-1, "invalid body - content "
+				"length %ld different than "
+				"actual body %d\n", get_content_length(msg), body.len);
 			ret = SV_INVALID_CONTENT_LENGTH;
 			goto failed;
 		}
@@ -1975,12 +1937,12 @@ static int w_sip_validate(struct sip_msg *msg, char *flags_s, char* pv_result)
 failed:
 	LM_DBG("message does not comply with SIP RFC3261 : (%s)\n", reason);
 
-	if (pv_result != NULL)
+	if (err_txt)
 	{
 		pv_val.rs.len = strlen(reason);
 		pv_val.rs.s = reason;
 		pv_val.flags = PV_VAL_STR;
-		if (pv_set_value(msg, &pv_res->spec, 0, &pv_val) != 0)
+		if (pv_set_value(msg, err_txt, 0, &pv_val) != 0)
 		{
 			LM_ERR("cannot populate parameter\n");
 			return SV_GENERIC_FAILURE;
@@ -1992,36 +1954,13 @@ failed:
 #undef CHECK_HEADER
 
 
-
-/* Change_reply_status config parsing function (supports AVPs) */
-static int change_reply_status_fixup(void** param, int param_no)
-{
-	if(param_no == 1)
-		return fixup_igp(param);
-
-	if(param_no == 2)
-		return fixup_spve(param);
-
-	return 0;
-}
-
 /* Function to change  the reply status in reply route */
-static int change_reply_status_f(struct sip_msg* msg, char* str1, char* str2)
+static int change_reply_status_f(struct sip_msg* msg, int* code, str* reason)
 {
-	int code_i;
-	str code_s;
+	int code_i = *code;
+	str code_s = *reason;
 	struct lump *l;
 	char *ch;
-
-	if(fixup_get_ivalue(msg, (gparam_p)str1, &code_i) < 0) {
-		LM_ERR("Wrong param 1, expected integer\n");
-		return -1;
-	}
-
-	if ( fixup_get_svalue(msg, (gparam_p) str2, &code_s) < 0) {
-		LM_ERR("Wrong param 2, expected string\n");
-		return -1;
-	}
 
 	if ((code_i < 100) || (code_i > 699)) {
 		LM_ERR("wrong status code: %d\n", code_i);
@@ -2067,58 +2006,20 @@ static int change_reply_status_f(struct sip_msg* msg, char* str1, char* str2)
 }
 
 
-static int hl_opt_fixup(void** param, int param_no)
+static int list_hdr_has_option(struct sip_msg *msg, void *hdr, str *option)
 {
-	if (param_no==1)
-		/* name of the header */
-		return hname_fixup( param, param_no);
-
-	if (param_no==2)
-		/* value for the option */
-		return fixup_spve( param );
-
-	LM_BUG("too many parameters found\n");
-	return -1;
-}
-
-static int list_hdr_has_option(struct sip_msg *msg, char *s1, char *s2)
-{
-	str option;
-
-	/* evaluate the value for the option */
-	if (fixup_get_svalue( msg, (gparam_p)s2, &option)==-1) {
-		LM_ERR("failed to evaluate the value for the option\n");
-		return -1;
-	}
-
-	return list_hdr_has_val(msg, (gparam_p)s1, &option);
+	return list_hdr_has_val(msg, (int_str_t *)hdr, option);
 }
 
 
-static int list_hdr_add_option(struct sip_msg *msg, char *s1, char *s2)
+static int list_hdr_add_option(struct sip_msg *msg, void *hdr, str *option)
 {
-	str option;
-
-	/* evaluate the value for the option */
-	if (fixup_get_svalue( msg, (gparam_p)s2, &option)==-1) {
-		LM_ERR("failed to evaluate the value for the option\n");
-		return -1;
-	}
-
-	return list_hdr_add_val(msg, (gparam_p)s1, &option);
+	return list_hdr_add_val(msg, (int_str_t *)hdr, option);
 }
 
 
-static int list_hdr_remove_option(struct sip_msg *msg, char *s1, char *s2)
+static int list_hdr_remove_option(struct sip_msg *msg, void *hdr, str *option)
 {
-	str option;
-
-	/* evaluate the value for the option */
-	if (fixup_get_svalue( msg, (gparam_p)s2, &option)==-1) {
-		LM_ERR("failed to evaluate the value for the option\n");
-		return -1;
-	}
-
-	return list_hdr_remove_val(msg, (gparam_p)s1, &option);
+	return list_hdr_remove_val(msg, (int_str_t *)hdr, option);
 }
 

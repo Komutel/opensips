@@ -253,7 +253,7 @@ int cgrates_set_reply_with_values(json_object *jobj)
 			break;
 		}
 	}
-	return 0;
+	return 1;
 }
 
 /* message builder */
@@ -597,7 +597,8 @@ static int cgrates_async_resume_repl(int fd,
 
 	ret = cgrc_async_read(c, cp->reply_f, cp->reply_p);
 
-	if (async_status == ASYNC_DONE) {
+	switch (async_status) {
+	case ASYNC_DONE:
 		/* processing done - remove the FD and replace the handler */
 		async_status = ASYNC_DONE_NO_IO;
 		reactor_del_reader(c->fd, -1, 0);
@@ -606,6 +607,9 @@ static int cgrates_async_resume_repl(int fd,
 			ret = -1;
 			goto end;
 		}
+		break;
+	case ASYNC_CONTINUE:
+		return 1;
 	}
 end:
 	/* done with this connection */
@@ -759,6 +763,15 @@ reprocess:
 	}
 	/* all done */
 	json_tokener_reset(c->jtok);
+	/* if a request was processed and we were waiting for a reply, indicate
+	 * that we shold continue reading from this socket, otherwise we will
+	 * wrongfully waiting for a reply
+	 */
+	if (ret == 0 && f) {
+		LM_DBG("processed a request - continue waiting for a reply!\n");
+		async_status = ASYNC_CONTINUE;
+		return 1;
+	}
 done:
 	async_status = ASYNC_DONE;
 	return final_ret;
@@ -795,6 +808,8 @@ static inline int cgrates_process_req(struct cgr_conn *c, json_object *id,
 	if (strcmp(method, "SMGClientV1.DisconnectSession") == 0 ||
 			strcmp(method, "SessionSv1.DisconnectSession") == 0) {
 		ret = cgr_acc_terminate(param, &jret);
+	} else if (strcmp(method, "SessionSv1.GetActiveSessionIDs") == 0) {
+		ret = cgr_acc_sessions(param, &jret);
 	} else {
 		LM_ERR("cannot handle method %s\n", method);
 		ret = -1;
@@ -934,8 +949,11 @@ void cgr_free_sess(struct cgr_session *s)
 	struct list_head *l;
 	struct list_head *t;
 
-	if (s->acc_info)
+	if (s->acc_info) {
+		if (s->acc_info->originid.s)
+			shm_free(s->acc_info->originid.s);
 		shm_free(s->acc_info);
+	}
 	list_for_each_safe(l, t, &s->event_kvs)
 		cgr_free_kv(list_entry(l, struct cgr_kv, list));
 	list_for_each_safe(l, t, &s->req_kvs)
@@ -995,18 +1013,15 @@ void cgr_free_local_ctx(void *param)
 
 
 /* functions related to parameters fix */
-str *cgr_get_acc(struct sip_msg *msg, char *acc_p)
+str *cgr_get_acc(struct sip_msg *msg, str *acc_p)
 {
 	static str acc;
 	struct to_body *from;
 	struct sip_uri  uri;
 
-	if (acc_p) {
-		if (fixup_get_svalue(msg, (gparam_p)acc_p, &acc) < 0)
-			goto error;
-		else
-			return &acc;
-	}
+	if (acc_p)
+		return acc_p;
+
 	/* get the username from FROM_HDR */
 	if (parse_from_header(msg) != 0) {
 		LM_ERR("unable to parse from hdr\n");
@@ -1017,36 +1032,23 @@ str *cgr_get_acc(struct sip_msg *msg, char *acc_p)
 		LM_ERR("unable to parse from uri\n");
 		goto error;
 	}
+
+	acc = uri.user;
+	return &acc;
+
 error:
 	LM_ERR("failed fo fetch account's name\n");
 	return NULL;
 }
 
-str *cgr_get_dst(struct sip_msg *msg, char *dst_p)
+str *cgr_get_dst(struct sip_msg *msg, str *dst_p)
 {
-	static str dst;
+	if (dst_p)
+		return dst_p;
 
-	if (dst_p) {
-		if (fixup_get_svalue(msg, (gparam_p)dst_p, &dst) < 0)
-			goto error;
-		else
-			return &dst;
-	}
 	if(msg->parsed_uri_ok == 0 && parse_sip_msg_uri(msg)<0) {
 		LM_ERR("cannot parse Request URI!\n");
 		return NULL;
 	}
 	return &msg->parsed_uri.user;
-error:
-	LM_ERR("failed fo fetch destination\n");
-	return NULL;
-}
-
-str *cgr_get_tag(struct sip_msg *msg, char *tag_p)
-{
-	static str tag;
-
-	if (tag_p && fixup_get_svalue(msg, (gparam_p)tag_p, &tag) >= 0)
-		return &tag;
-	return NULL;
 }

@@ -97,7 +97,7 @@ pua|8
 re_grp|
 re_grp|2
 registrant|
-registrant|1
+registrant|2
 rls_presentity|
 rls_presentity|1
 rls_watchers|
@@ -112,6 +112,8 @@ silo|
 silo|6
 sip_trace|
 sip_trace|5
+smpp|
+smpp|1
 speed_dial|
 speed_dial|3
 subscriber|

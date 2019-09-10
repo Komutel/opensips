@@ -325,7 +325,39 @@ modparam("proto_tls", "tls_max_msg_chunks", 8)
 </programlisting>
 		</example>
 	</section>
-	<section id="trace-destination">
+
+	<section id="param_tls_cert_check_on_conn_reusage" xreflabel="cert_check_on_conn_reusage">
+		<title><varname>cert_check_on_conn_reusage</varname> (integer)</title>
+		<para>
+		This parameter turns on or off the extra checking/matching of the
+		TLS domain (SSL certificate) when comes to reusing an existing TLS
+		connection. Without this extra check, only IP and port of the
+		connections will be check (in order to re-use an existing connection).
+		With this extra check, the connection to be reused must have the same
+		SSL certificate as the one set for the current signaling operation.
+		</para>
+		<para>
+		This checking is done only when comes to send SIP traffic via TLS and
+		it is applied only against connections that were created / initiated 
+		by OpenSIPS (as TLS client). Any accepte connection (as TLS server) will
+		automatically match (the extra test will be skipped).
+		</para>
+		<para>
+		<emphasis>
+			Default value is 0 (disabled).
+		</emphasis>
+		</para>
+		<example>
+		<title>Set <varname>cert_check_on_conn_reusage</varname> parameter</title>
+		<programlisting format="linespecific">
+...
+modparam("proto_tls", "cert_check_on_conn_reusage", 1)
+...
+</programlisting>
+		</example>
+	</section>
+
+	<section id="param_tls_trace_destination" xreflabel="trace_destination">
 		<title><varname>trace_destination</varname> (string)</title>
 		<para>
 			Trace destination as defined in the tracing module. Currently
@@ -362,7 +394,7 @@ modparam("proto_tls", "trace_destination", "hep_dest")
 		<title><varname>trace_on</varname> (int)</title>
 		<para>
 			This controls whether tracing for tls is on or not. You still need to define
-			<xref linkend="trace-destination"/>in order to work, but this value will be
+			<xref linkend="param_tls_trace_destination"/>in order to work, but this value will be
 			controlled using mi function <xref linkend="mi_tls_trace"/>.
 		</para>
 		<emphasis>
@@ -387,7 +419,7 @@ modparam("proto_tls", "trace_on", 1)
 			connection. To disable tracing for a specific connection the last call in
 			this route must be <emphasis role="bold">drop</emphasis>, any other exit
 			mode resulting in tracing the current connection ( of course you still
-			have to define a <xref linkend="trace-destination"/> and trace must be
+			have to define a <xref linkend="param_tls_trace_destination"/> and trace must be
 			on at the time this connection is opened.
 		</para>
 		<para>
@@ -472,7 +504,7 @@ route[tls_filter] {
 			MI FIFO Command Format:
 			</para>
 			<programlisting  format="linespecific">
-			opensipsctl fifo tls_trace on
+			opensips-cli -x mi tls_trace on
 			</programlisting>
 		</section>
 	</section>

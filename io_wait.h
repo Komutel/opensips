@@ -109,6 +109,8 @@ struct fd_map {
 	int flags;            /* so far used to indicate whether we should 
 	                       * read, write or both ; last 4 are reserved for 
 	                       * internal usage */
+	int app_flags;        /* flags to be used by upper layer apps, not by
+	                       * the reactor */
 };
 
 
@@ -334,7 +336,7 @@ again:
  * functions (it avoids functions calls, the overhead being only an extra
  *  switch())
 */
-inline static int io_watch_add(	io_wait_h* h,
+inline static int io_watch_add(	io_wait_h* h, /* lgtm [cpp/use-of-goto] */
 								int fd,
 								fd_type type,
 								void* data,
@@ -837,6 +839,10 @@ int init_io_wait(io_wait_h* h, char *name, int max_fd,
 
 /*! \brief destroys everything init_io_wait allocated */
 void destroy_io_wait(io_wait_h* h);
+
+int io_set_app_flag( io_wait_h *h , int type, int app_flag);
+
+int io_check_app_flag( io_wait_h *h , int app_flag);
 
 
 #endif

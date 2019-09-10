@@ -76,7 +76,7 @@ int hostent_shm_cpy(struct hostent *dst, struct hostent* src)
 		p += src->h_length;
 	}
 
-	dst->h_addr = src->h_addr_list[0];
+	dst->h_addr = dst->h_addr_list[0];
 	dst->h_addrtype = src->h_addrtype;
 	dst->h_length = src->h_length;
 	return 0;
@@ -213,9 +213,10 @@ struct proxy_l* mk_proxy(str* name, unsigned short port, unsigned short proto,
 	LM_DBG("doing DNS lookup...\n");
 	he = sip_resolvehost(name, &(p->port), &p->proto, is_sips,
 		disable_dns_failover?0:&p->dn );
-	if (he==0){
+	if (!he || !he->h_addr_list[0]) {
 		ser_error=E_BAD_ADDRESS;
-		LM_CRIT("could not resolve hostname: \"%.*s\"\n", name->len, name->s);
+		LM_CRIT("could not resolve hostname: \"%.*s\"%s\n",
+		        name->len, name->s, he ? " (0 results)" : "");
 		pkg_free(p);
 		goto error;
 	}

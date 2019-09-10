@@ -81,8 +81,8 @@ struct bin_data {
 };
 
 static cmd_export_t cmds[] = {
-	{"proto_init", (cmd_function)proto_bin_init, 0, 0, 0, 0},
-	{0,0,0,0,0,0}
+	{"proto_init", (cmd_function)proto_bin_init, {{0,0,0}},0},
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t params[] = {
@@ -104,7 +104,9 @@ struct module_exports exports = {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	0,				 /* load function */
 	NULL,            /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	params,     /* module parameters */
@@ -117,6 +119,7 @@ struct module_exports exports = {
 	0,          /* response function */
 	0,          /* destroy function */
 	0,          /* per-child init function */
+	0           /* reload confirm function */
 };
 
 static int proto_bin_init(struct proto_info *pi)
@@ -520,9 +523,9 @@ static int proto_bin_send(struct socket_info* send_sock,
 	if (to){
 		su2ip_addr(&ip, to);
 		port=su_getport(to);
-		n = tcp_conn_get(id, &ip, port, PROTO_BIN, &c, &fd);
+		n = tcp_conn_get(id, &ip, port, PROTO_BIN, NULL, &c, &fd);
 	}else if (id){
-		n = tcp_conn_get(id, 0, 0, PROTO_NONE, &c, &fd);
+		n = tcp_conn_get(id, 0, 0, PROTO_NONE, NULL, &c, &fd);
 	}else{
 		LM_CRIT("tcp_send called with null id & to\n");
 		return -1;
@@ -555,6 +558,9 @@ static int proto_bin_send(struct socket_info* send_sock,
 			if (n==0) {
 				/* mark the ID of the used connection (tracing purposes) */
 				last_outgoing_tcp_id = c->id;
+				send_sock->last_local_real_port = c->rcv.dst_port;
+				send_sock->last_remote_real_port = c->rcv.src_port;
+
 				/* connect is still in progress, break the sending
 				 * flow now (the actual write will be done when 
 				 * connect will be completed */
@@ -593,6 +599,8 @@ static int proto_bin_send(struct socket_info* send_sock,
 
 			/* mark the ID of the used connection (tracing purposes) */
 			last_outgoing_tcp_id = c->id;
+			send_sock->last_local_real_port = c->rcv.dst_port;
+			send_sock->last_remote_real_port = c->rcv.src_port;
 
 			/* we successfully added our write chunk - success */
 			tcp_conn_release(c, 0);
@@ -630,6 +638,8 @@ send_it:
 
 	/* mark the ID of the used connection (tracing purposes) */
 	last_outgoing_tcp_id = c->id;
+	send_sock->last_local_real_port = c->rcv.dst_port;
+	send_sock->last_remote_real_port = c->rcv.src_port;
 
 	tcp_conn_release(c, (n<len)?1:0/*pending data in async mode?*/ );
 	return n;
@@ -678,15 +688,17 @@ static int bin_handle_req(struct tcp_req *req,
 			pkg_free(req);
 		}
 
-		if (size)
-			memmove(req->buf, req->parsed, size);
-
-		init_tcp_req(req, size);
 		con->msg_attempts = 0;
 
-		/* if we still have some unparsed bytes, try to  parse them too*/
-		if (size) 
+		if (size) {
+			memmove(req->buf, req->parsed, size);
+
+			init_tcp_req(req, size);
+
+			/* if we still have some unparsed bytes, try to  parse them too*/
 			return 1;
+		}
+
 	} else {  
 		/* request not complete - check the if the thresholds are exceeded */
 		if (con->msg_attempts==0)

@@ -207,36 +207,6 @@ modparam("presence", "cluster_pres_events" ,"presence, dialog;sla, message-summa
 		</example>
 	</section>
 
-	<section id="param_cluster_sharing_tags" xreflabel="cluster_sharing_tags">
-		<title><varname>cluster_sharing_tags</varname> (str)</title>
-		<para>
-		Definition of a sharing tag (and its value) to be known by OpenSIPS 
-		from the startup. Note that tags may be dynamically learned during
-		runtime.
-		</para>
-		<para>
-		Use this option if you want to force a certain value ("active" or 
-		"inactive") from the very beginning.
-		</para>
-		<para>
-		For more on presence clustering see the 
-		<xref linkend="presence_clustering"/> chapter.
-		</para>
-		<para>
-		<emphasis>Default value is <quote>empty</quote> (none).
-		</emphasis>
-		</para>
-		<example>
-		<title>Set <varname>cluster_sharing_tags</varname> parameter</title>
-		<programlisting format="linespecific">
-...
-modparam("presence", "cluster_pres_events" ,"vip1=active")
-modparam("presence", "cluster_pres_events" ,"vip2=backup")
-...
-</programlisting>
-		</example>
-	</section>
-
 	<section id="param_expires_offset" xreflabel="expires_offset">
 		<title><varname>expires_offset</varname> (int)</title>
 		<para>
@@ -297,28 +267,28 @@ modparam("presence", "max_expires_publish", 3600)
 	</section>
 
 
-<section id="param_server_address" xreflabel="server_address">
-		<title><varname>server_address</varname> (str)</title>
+	<section id="param_contact_user" xreflabel="contact_user">
+		<title><varname>contact_user</varname> (str)</title>
 		<para>
-		The optional presence server URI address which will become the value of
-		Contact header filed for 200OK replies to Subscribe and Publish 
-		and in Notify messages.
+		This is the username that will be used in the Contact header for the 200 OK
+		replies to SUBSCRIBE and in the following in-dialog NOTIFY requests.
+		The IP address, port and transport for the Contact will be automatically
+		determined based on the interface where the SUBSCRIBE was received.
 		</para>
 		<para>
-		NOTE: this must be a fully formated SIP URI, with port and transport
-		parameter if the case.
+		If set to an empty string, no username will be added to the contact and
+		the contact will be built just out of the IP, port and transport.
 		</para>
 		<para>
-		If not set (as it is by default), OpenSIPS will generate the Contact 
-		URI based on the interface it received the SIP traffic.
+		<emphasis>Default value is <quote>presence</quote>.</emphasis>
 		</para>
 		<example>
-		<title>Set <varname>server_address</varname> parameter</title>
+		<title>Set <varname>contact_user</varname> parameter</title>
 		<programlisting format="linespecific">
 ...
-modparam("presence", "server_address", "sip:10.10.10.10:5060")
+modparam("presence", "contact_user", "presence")
 ...
-</programlisting>
+		</programlisting>
 		</example>
 	</section>
 
@@ -636,13 +606,16 @@ modparam("presence", "pres_htable_size", 11)
 	<title>Exported Functions</title>
 	<section id="func_handle_publish" xreflabel="handle_publish()">
 		<title>
-		<function moreinfo="none">handle_publish(sender_uri)</function>
+		<function moreinfo="none">handle_publish([sender_uri])</function>
 		</title>
 		<para>
 		The function handles PUBLISH requests. It stores and updates 
 		published information in database and calls functions to send 
 		NOTIFY messages when changes in the published information occur.
-		It takes one argument -> sender_uri. The parameter was added 
+		</para>
+		<para>
+		It may takes one optional string argument, the 'sender_uri' SIP URI.
+		The parameter was added 
 		for enabling BLA implementation. If present, Notification of
 		a change in published state is not sent to the respective uri
 		even though a subscription exists.
@@ -681,7 +654,7 @@ modparam("presence", "pres_htable_size", 11)
 	if(is_method("PUBLISH"))
 	{
 		if($hdr(Sender)!= NULL)
-			handle_publish("$hdr(Sender)");
+			handle_publish($hdr(Sender));
 		else
 			handle_publish();
 	} 
@@ -707,8 +680,8 @@ modparam("presence", "pres_htable_size", 11)
 		<itemizedlist>
 			<listitem>
 				<para>
-				<emphasis>force_active</emphasis> - options parameter that 
-				controlls what is the default policy (of the presentity) on 
+				<emphasis>force_active</emphasis> (int, optional) - optional parameter that 
+				controls what is the default policy (of the presentity) on 
 				accepting new subscriptions (accept or reject) - of course, 
 				this parameter makes sense only when using a presence 
 				configuration with privacy rules enabled (force_active 
@@ -716,17 +689,17 @@ modparam("presence", "pres_htable_size", 11)
 				</para>
 				<para>
 				There are scenarios where the presentity (the party you 
-				subscribe to) can not upload an XCAP document with it's 
-				privacy rules (to controll which watchers are allowed to 
-				subscribe to it). In such case, from script level, you can
+				subscribe to) can not upload an XCAP document with its
+				privacy rules (to control which watchers are allowed to 
+				subscribe to it). In such cases, from script level, you can
 				force the presence server to consider the current subscription
 				allowed (with Subscription-Status:active) by calling the 
-				handle_subscribe() function with the string parameter "1".
+				handle_subscribe() function with the integer parameter "1".
 				</para>
 			</listitem>
 			<listitem>
 				<para>
-				<emphasis>sharing_tag</emphasis> - options parameter telling
+				<emphasis>sharing_tag</emphasis> (string, optional) - optional parameter telling
 				the owner tag (for the subscription) in clusetering scenarios 
 				where the subscription data is shared between multiple 
 				servers - see the <xref linkend="presence_clustering"/>
@@ -737,7 +710,7 @@ modparam("presence", "pres_htable_size", 11)
 		<programlisting format="linespecific">
    Ex: 
 	if($ru =~ "kphone@opensips.org")
-		handle_subscribe("1");
+		handle_subscribe(1);
 		</programlisting>
 		<para>
 		This function can be used from REQUEST_ROUTE.
@@ -776,16 +749,16 @@ if($rm=="SUBSCRIBE")
 
 <section id="exported_mi_functions" xreflabel="Exported MI Functions">
 	<title>Exported MI Functions</title>
-	<section id="mi_refreshWatchers" xreflabel="refreshWatchers">
+	<section id="mi_refresh_watchers" xreflabel="refresh_watchers">
 		<title>
-		<function moreinfo="none">refreshWatchers</function>
+		<function moreinfo="none">refresh_watchers</function>
 		</title>
 		<para>
 		Triggers sending Notify messages to watchers if a change in watchers
 		authorization or in published state occurred.
 		</para>
 		<para>
-		Name: <emphasis>refreshWatchers</emphasis>
+		Name: <emphasis>refresh_watchers</emphasis>
 		</para>
 		<para>Parameters:</para>
 		<itemizedlist>
@@ -821,7 +794,7 @@ if($rm=="SUBSCRIBE")
 		MI FIFO Command Format:
 		</para>
 	<programlisting  format="linespecific">
-opensipsctl fifo refreshWatchers sip:11@192.168.2.132 presence 1
+opensips-cli -x mi refresh_watchers sip:11@192.168.2.132 presence 1
 	</programlisting>
 	</section>
 
@@ -842,7 +815,7 @@ opensipsctl fifo refreshWatchers sip:11@192.168.2.132 presence 1
 		MI FIFO Command Format:
 	  </para>
 	  <programlisting  format="linespecific">
-opensipsctl fifo cleanup
+opensips-cli -x mi cleanup
 	  </programlisting>
 	</section>
 
@@ -862,7 +835,7 @@ opensipsctl fifo cleanup
 		MI FIFO Command Format:
 	  </para>
 	  <programlisting  format="linespecific">
-opensipsctl fifo pres_phtable_list
+opensips-cli -x mi pres_phtable_list
 	  </programlisting>
 	</section>
 
@@ -889,7 +862,7 @@ opensipsctl fifo pres_phtable_list
 		MI FIFO Command Format:
 	  </para>
 	  <programlisting  format="linespecific">
-opensipsctl fifo subs_phtable_list sip:222@domain2.com sip:user_1@example.com
+opensips-cli -x mi subs_phtable_list sip:222@domain2.com sip:user_1@example.com
 	  </programlisting>
 	</section>
 
@@ -925,7 +898,7 @@ opensipsctl fifo subs_phtable_list sip:222@domain2.com sip:user_1@example.com
 		MI FIFO Command Format:
 	  </para>
 	  <programlisting  format="linespecific">
-opensipsctl fifo pres_expose presence ^sip:10\.0\.5\.[0-9]*
+opensips-cli -x mi pres_expose presence ^sip:10\.0\.5\.[0-9]*
 	  </programlisting>
 	</section>
 </section>

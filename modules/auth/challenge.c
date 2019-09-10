@@ -33,6 +33,7 @@
 #include "../../pvar.h"
 #include "../../str.h"
 #include "../../ut.h"
+#include "../../lib/csv.h"
 #include "../../mod_fix.h"
 #include "auth_mod.h"
 #include "common.h"
@@ -42,7 +43,6 @@
 #include "api.h"
 
 static str auth_400_err = str_init(MESSAGE_400);
-static str auth_500_err = str_init(MESSAGE_500);
 
 
 /*
@@ -59,8 +59,12 @@ static str auth_500_err = str_init(MESSAGE_500);
 #define WWW_AUTH_CHALLENGE "WWW-Authenticate"
 
 
-#define QOP_PARAM	  ", qop=\"auth\""
-#define QOP_PARAM_LEN	  (sizeof(QOP_PARAM)-1)
+#define QOP_AUTH	      ", qop=\"auth\""
+#define QOP_AUTH_LEN	  (sizeof(QOP_AUTH)-1)
+#define QOP_AUTH_INT	  ", qop=\"auth-int\""
+#define QOP_AUTH_INT_LEN  (sizeof(QOP_AUTH_INT)-1)
+#define QOP_AUTH_BOTH	  ", qop=\"auth,auth-int\""
+#define QOP_AUTH_BOTH_LEN  (sizeof(QOP_AUTH_BOTH)-1)
 #define STALE_PARAM	  ", stale=true"
 #define STALE_PARAM_LEN	  (sizeof(STALE_PARAM)-1)
 #define DIGEST_REALM	  ": Digest realm=\""
@@ -80,6 +84,8 @@ static inline char *build_auth_hf(int _retries, int _stale, str* _realm,
 	int hf_name_len;
 	char *hf, *p;
 	int index = 0;
+	int qop_len = 0;
+	const char *qop_param;
 
 	if(!disable_nonce_check) {
 		/* get the nonce index and mark it as used */
@@ -92,6 +98,19 @@ static inline char *build_auth_hf(int _retries, int _stale, str* _realm,
 		LM_DBG("nonce index= %d\n", index);
 	}
 
+	if (_qop) {
+		if (_qop == QOP_TYPE_AUTH) {
+			qop_len = QOP_AUTH_LEN;
+			qop_param = QOP_AUTH;
+		} else if (_qop == QOP_TYPE_AUTH_INT) {
+			qop_len = QOP_AUTH_INT_LEN;
+			qop_param = QOP_AUTH_INT;
+		} else {
+			qop_len = QOP_AUTH_BOTH_LEN;
+			qop_param = QOP_AUTH_BOTH;
+		}
+	}
+
 	/* length calculation */
 	*_len=hf_name_len=strlen(_hf_name);
 	*_len+=DIGEST_REALM_LEN
@@ -99,7 +118,7 @@ static inline char *build_auth_hf(int _retries, int _stale, str* _realm,
 		+DIGEST_NONCE_LEN
 		+((!disable_nonce_check)?NONCE_LEN:NONCE_LEN-8)
 		+1 /* '"' */
-		+((_qop)? QOP_PARAM_LEN:0)
+		+qop_len
 		+((_stale)? STALE_PARAM_LEN : 0)
 #ifdef _PRINT_MD5
 		+DIGEST_MD5_LEN
@@ -121,8 +140,8 @@ static inline char *build_auth_hf(int _retries, int _stale, str* _realm,
 	p+=((!disable_nonce_check)?NONCE_LEN:NONCE_LEN-8);
 	*p='"';p++;
 	if (_qop) {
-		memcpy(p, QOP_PARAM, QOP_PARAM_LEN);
-		p+=QOP_PARAM_LEN;
+		memcpy(p, qop_param, qop_len);
+		p+=qop_len;
 	}
 	if (_stale) {
 		memcpy(p, STALE_PARAM, STALE_PARAM_LEN);
@@ -141,7 +160,7 @@ static inline char *build_auth_hf(int _retries, int _stale, str* _realm,
 /*
  * Create and send a challenge
  */
-static inline int challenge(struct sip_msg* _msg, gparam_p _realm, int _qop,
+static inline int challenge(struct sip_msg* _msg, str *realm, int _qop,
 						int _code, char* _message, char* _challenge_msg)
 {
 	int auth_hf_len;
@@ -151,7 +170,6 @@ static inline int challenge(struct sip_msg* _msg, gparam_p _realm, int _qop,
 	int ret;
 	hdr_types_t hftype = 0; /* Makes gcc happy */
 	struct sip_uri *uri;
-	str realm;
 	str reason;
 
 	switch(_code) {
@@ -167,15 +185,7 @@ static inline int challenge(struct sip_msg* _msg, gparam_p _realm, int _qop,
 
 	if (h) cred = (auth_body_t*)(h->parsed);
 
-	if(fixup_get_svalue(_msg, _realm, &realm)!=0)
-	{
-		LM_ERR("invalid realm parameter");
-		if (send_resp(_msg, 500, &auth_500_err, 0, 0)==-1)
-			return -1;
-		else
-			return 0;
-	}
-	if (realm.len == 0) {
+	if (realm->len == 0) {
 		if (get_realm(_msg, hftype, &uri) < 0) {
 			LM_ERR("failed to extract URI\n");
 			if (send_resp(_msg, 400, &auth_400_err, 0, 0) == -1) {
@@ -185,11 +195,11 @@ static inline int challenge(struct sip_msg* _msg, gparam_p _realm, int _qop,
 			return 0;
 		}
 
-		realm = uri->host;
-		strip_realm(&realm);
+		realm = &uri->host;
+		strip_realm(realm);
 	}
 
-	auth_hf = build_auth_hf(0, (cred ? cred->stale : 0), &realm,
+	auth_hf = build_auth_hf(0, (cred ? cred->stale : 0), realm,
 			&auth_hf_len, _qop, _challenge_msg);
 	if (!auth_hf) {
 		LM_ERR("failed to generate nonce\n");
@@ -208,14 +218,46 @@ static inline int challenge(struct sip_msg* _msg, gparam_p _realm, int _qop,
 	return 0;
 }
 
+int fixup_qop(void** param)
+{
+	str *s = (str*)*param;
+	int qop_type = 0;
+	csv_record *q_csv, *q;
+
+	q_csv = parse_csv_record(s);
+	if (!q_csv) {
+		LM_ERR("Failed to parse qop types\n");
+		return -1;
+	}
+	for (q = q_csv; q; q = q->next) {
+		if (!str_strcmp(&q->s, _str("auth")))  {
+			if (qop_type == QOP_TYPE_AUTH_INT)
+				qop_type = QOP_TYPE_BOTH;
+			else
+				qop_type = QOP_TYPE_AUTH;
+		} else if (!str_strcmp(&q->s, _str("auth-int"))) {
+			if (qop_type == QOP_TYPE_AUTH)
+				qop_type = QOP_TYPE_BOTH;
+			else
+				qop_type = QOP_TYPE_AUTH_INT;
+		} else {
+			LM_ERR("Bad qop type\n");
+			free_csv_record(q_csv);
+			return -1;
+		}
+	}
+	free_csv_record(q_csv);
+
+	*param=(void*)(long)qop_type;
+	return 0;
+}
 
 /*
  * Challenge a user to send credentials using WWW-Authorize header field
  */
-int www_challenge(struct sip_msg* _msg, char* _realm, char* _qop)
+int www_challenge(struct sip_msg* _msg, str* _realm, void* _qop)
 {
-	return challenge(_msg, (gparam_p)_realm,
-			!_qop ? 0 : (int)*(unsigned int *)_qop, 401,
+	return challenge(_msg, _realm, (int)(long)_qop, 401,
 			MESSAGE_401, WWW_AUTH_CHALLENGE);
 }
 
@@ -223,10 +265,9 @@ int www_challenge(struct sip_msg* _msg, char* _realm, char* _qop)
 /*
  * Challenge a user to send credentials using Proxy-Authorize header field
  */
-int proxy_challenge(struct sip_msg* _msg, char* _realm, char* _qop)
+int proxy_challenge(struct sip_msg* _msg, str* _realm, void* _qop)
 {
-	return challenge(_msg, (gparam_p)_realm,
-			!_qop ? 0 : (int)*(unsigned int *)_qop, 407,
+	return challenge(_msg, _realm, (int)(long)_qop, 407,
 			MESSAGE_407, PROXY_AUTH_CHALLENGE);
 }
 

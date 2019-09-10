@@ -138,7 +138,8 @@ void pt_become_idle(void)
 #define SUM_UP_LOAD(_now, _pno, _TYPE, _ratio) \
 	do { \
 		/* check if the entire time window has the same status */ \
-		if ((_now-PT_LOAD(_pno).last_time) >= (_TYPE##_WINDOW_TIME)*(_ratio)) { \
+		if (((long long)_now-(long long)PT_LOAD(_pno).last_time) >= \
+				(_TYPE##_WINDOW_TIME)*(_ratio)){\
 			/* nothing recorded in the last time window */ \
 			used += PT_LOAD(_pno).is_busy?_TYPE##_WINDOW_TIME*_ratio:0; \
 		} else { \
@@ -154,7 +155,8 @@ void pt_become_idle(void)
 					_TYPE##_WINDOW_SIZE; \
 				/* the start is between [new,old], so no used recorded yet */ \
 				if (idx_start>=idx_old && idx_start<=idx_new) {\
-					return PT_LOAD(_pno).is_busy?_TYPE##_WINDOW_TIME*_ratio:0;\
+					used+= PT_LOAD(_pno).is_busy?_TYPE##_WINDOW_TIME*_ratio:0;\
+					break; \
 				}\
 			} else { \
 				idx_start = idx_new; \
@@ -239,17 +241,20 @@ unsigned int pt_get_rt_load(int _)
 	utime_t usec_now;
 	struct timeval tv;
 	int idx_old, idx_new, idx_start, i; /* used inside the macro */
-	int n;
+	unsigned int n, summed_procs=0;
 	unsigned long long used = 0;
 
 	gettimeofday( &tv, NULL);
 	usec_now = ((utime_t)(tv.tv_sec)) * 1000000 + tv.tv_usec;
 
-	for( n=0 ; n<counted_processes; n++)
-		if ( (pt[n].flags&(OSS_FORK_NO_LOAD|OSS_FORK_IS_EXTRA))==0 )
+	for( n=0 ; n<counted_max_processes; n++)
+		if ( is_process_running(n) &&
+		(pt[n].flags&(OSS_PROC_NO_LOAD|OSS_PROC_IS_EXTRA))==0 ) {
 			SUM_UP_LOAD( usec_now, n, ST, 1);
+			summed_procs++;
+		}
 
-	return (used*100/(ST_WINDOW_TIME*counted_processes));
+	return (used*100/(ST_WINDOW_TIME*summed_procs));
 }
 
 
@@ -258,17 +263,20 @@ unsigned int pt_get_1m_load(int _)
 	utime_t usec_now;
 	struct timeval tv;
 	int idx_old, idx_new, idx_start, i; /* used inside the macro */
-	int n;
+	unsigned int n, summed_procs=0;
 	unsigned long long used = 0;
 
 	gettimeofday( &tv, NULL);
 	usec_now = ((utime_t)(tv.tv_sec)) * 1000000 + tv.tv_usec;
 
-	for( n=0 ; n<counted_processes; n++)
-		if ( (pt[n].flags&(OSS_FORK_NO_LOAD|OSS_FORK_IS_EXTRA))==0 )
+	for( n=0 ; n<counted_max_processes; n++)
+		if ( is_process_running(n) &&
+		(pt[n].flags&(OSS_PROC_NO_LOAD|OSS_PROC_IS_EXTRA))==0 ) {
 			SUM_UP_LOAD( usec_now, n, LT, LT_1m_RATIO);
+			summed_procs++;
+		}
 
-	return (used*100/(LT_WINDOW_TIME*counted_processes*LT_1m_RATIO));
+	return (used*100/((long long)LT_WINDOW_TIME*summed_procs*LT_1m_RATIO));
 }
 
 
@@ -277,17 +285,20 @@ unsigned int pt_get_10m_load(int _)
 	utime_t usec_now;
 	struct timeval tv;
 	int idx_old, idx_new, idx_start, i; /* used inside the macro */
-	int n;
+	unsigned int n, summed_procs=0;
 	unsigned long long used = 0;
 
 	gettimeofday( &tv, NULL);
 	usec_now = ((utime_t)(tv.tv_sec)) * 1000000 + tv.tv_usec;
 
-	for( n=0 ; n<counted_processes; n++)
-		if ( (pt[n].flags&(OSS_FORK_NO_LOAD|OSS_FORK_IS_EXTRA))==0 )
+	for( n=0 ; n<counted_max_processes; n++)
+		if ( is_process_running(n) &&
+		(pt[n].flags&(OSS_PROC_NO_LOAD|OSS_PROC_IS_EXTRA))==0 ) {
 			SUM_UP_LOAD( usec_now, n, LT, 1);
+			summed_procs++;
+		}
 
-	return (used*100/(LT_WINDOW_TIME*counted_processes));
+	return (used*100/((long long)LT_WINDOW_TIME*summed_procs));
 }
 
 
@@ -296,17 +307,19 @@ unsigned int pt_get_rt_loadall(int _)
 	utime_t usec_now;
 	struct timeval tv;
 	int idx_old, idx_new, idx_start, i; /* used inside the macro */
-	int n;
+	unsigned int n, summed_procs=0;
 	unsigned long long used = 0;
 
 	gettimeofday( &tv, NULL);
 	usec_now = ((utime_t)(tv.tv_sec)) * 1000000 + tv.tv_usec;
 
-	for( n=0 ; n<counted_processes; n++)
-		if ( (pt[n].flags&OSS_FORK_NO_LOAD)==0 )
+	for( n=0 ; n<counted_max_processes; n++)
+		if ( is_process_running(n) && (pt[n].flags&OSS_PROC_NO_LOAD)==0 ) {
 			SUM_UP_LOAD( usec_now, n, ST, 1);
+			summed_procs++;
+		}
 
-	return (used*100/(ST_WINDOW_TIME*counted_processes));
+	return (used*100/((long long)ST_WINDOW_TIME*summed_procs));
 }
 
 
@@ -315,17 +328,19 @@ unsigned int pt_get_1m_loadall(int _)
 	utime_t usec_now;
 	struct timeval tv;
 	int idx_old, idx_new, idx_start, i; /* used inside the macro */
-	int n;
+	unsigned int n, summed_procs=0;
 	unsigned long long used = 0;
 
 	gettimeofday( &tv, NULL);
 	usec_now = ((utime_t)(tv.tv_sec)) * 1000000 + tv.tv_usec;
 
-	for( n=0 ; n<counted_processes; n++)
-		if ( (pt[n].flags&OSS_FORK_NO_LOAD)==0 )
+	for( n=0 ; n<counted_max_processes; n++)
+		if ( is_process_running(n) && (pt[n].flags&OSS_PROC_NO_LOAD)==0 ) {
 			SUM_UP_LOAD( usec_now, n, LT, LT_1m_RATIO);
+			summed_procs++;
+		}
 
-	return (used*100/(LT_WINDOW_TIME*counted_processes*LT_1m_RATIO));
+	return (used*100/((long long)LT_WINDOW_TIME*summed_procs*LT_1m_RATIO));
 }
 
 
@@ -334,64 +349,76 @@ unsigned int pt_get_10m_loadall(int _)
 	utime_t usec_now;
 	struct timeval tv;
 	int idx_old, idx_new, idx_start, i; /* used inside the macro */
-	int n;
+	unsigned int n, summed_procs=0;
 	unsigned long long used = 0;
 
 	gettimeofday( &tv, NULL);
 	usec_now = ((utime_t)(tv.tv_sec)) * 1000000 + tv.tv_usec;
 
-	for( n=0 ; n<counted_processes; n++)
-		if ( (pt[n].flags&OSS_FORK_NO_LOAD)==0 )
+	for( n=0 ; n<counted_max_processes; n++)
+		if ( is_process_running(n) && (pt[n].flags&OSS_PROC_NO_LOAD)==0 ) {
 			SUM_UP_LOAD( usec_now, n, LT, 1);
+			summed_procs++;
+		}
 
-	return (used*100/(LT_WINDOW_TIME*counted_processes));
+	return (used*100/((long long)LT_WINDOW_TIME*summed_procs));
 }
 
 
-int register_process_load_stats(int pno)
+int register_processes_load_stats(int procs_no)
 {
 	char *stat_name;
 	str stat_prefix;
 	char *pno_s;
 	str name;
+	int pno;
 
-	pno_s = int2str( (unsigned int)pno, NULL);
+	/* build the stats and register them for each potential process
+	 * skipp the attendant, id 0 */
+	for( pno=1 ; pno<procs_no ; pno++) {
 
-	stat_prefix.s = "load-proc";
-	stat_prefix.len = sizeof("load-proc")-1;
-	if ( (stat_name = build_stat_name( &stat_prefix, pno_s)) == 0 ||
-	register_stat2( "load", stat_name, (stat_var**)pt_get_rt_proc_load,
-	STAT_IS_FUNC, (void*)(long)pno, 0) != 0) {
-		LM_ERR("failed to add RT load stat for process %d\n",pno);
+		pno_s = int2str( (unsigned int)pno, NULL);
+
+		stat_prefix.s = "load-proc";
+		stat_prefix.len = sizeof("load-proc")-1;
+		if ( (stat_name = build_stat_name( &stat_prefix, pno_s)) == 0 ||
+		register_stat2( "load", stat_name, (stat_var**)pt_get_rt_proc_load,
+		STAT_IS_FUNC, (void*)(long)pno, 0) != 0) {
+			LM_ERR("failed to add RT load stat for process %d\n",pno);
 		return -1;
-	}
-	name.s = stat_name;
-	name.len = strlen(stat_name);
-	pt[pno].load.load_rt = get_stat(&name);
+		}
+		name.s = stat_name;
+		name.len = strlen(stat_name);
+		pt[pno].load_rt = get_stat(&name);
+		pt[pno].load_rt->flags |= STAT_HIDDEN;
 
-	stat_prefix.s = "load1m-proc";
-	stat_prefix.len = sizeof("load1m-proc")-1;
-	if ( (stat_name = build_stat_name( &stat_prefix, pno_s)) == 0 ||
-	register_stat2( "load", stat_name, (stat_var**)pt_get_1m_proc_load,
-	STAT_IS_FUNC, (void*)(long)pno, 0) != 0) {
-		LM_ERR("failed to add RT load stat for process %d\n",pno);
-		return -1;
-	}
-	name.s = stat_name;
-	name.len = strlen(stat_name);
-	pt[pno].load.load_1m = get_stat(&name);
+		stat_prefix.s = "load1m-proc";
+		stat_prefix.len = sizeof("load1m-proc")-1;
+		if ( (stat_name = build_stat_name( &stat_prefix, pno_s)) == 0 ||
+		register_stat2( "load", stat_name, (stat_var**)pt_get_1m_proc_load,
+		STAT_IS_FUNC, (void*)(long)pno, 0) != 0) {
+			LM_ERR("failed to add RT load stat for process %d\n",pno);
+			return -1;
+		}
+		name.s = stat_name;
+		name.len = strlen(stat_name);
+		pt[pno].load_1m = get_stat(&name);
+		pt[pno].load_1m->flags |= STAT_HIDDEN;
 
-	stat_prefix.s = "load10m-proc";
-	stat_prefix.len = sizeof("load10m-proc")-1;
-	if ( (stat_name = build_stat_name( &stat_prefix, pno_s)) == 0 ||
-	register_stat2( "load", stat_name, (stat_var**)pt_get_10m_proc_load,
-	STAT_IS_FUNC, (void*)(long)pno, 0) != 0) {
-		LM_ERR("failed to add RT load stat for process %d\n",pno);
-		return -1;
+		stat_prefix.s = "load10m-proc";
+		stat_prefix.len = sizeof("load10m-proc")-1;
+		if ( (stat_name = build_stat_name( &stat_prefix, pno_s)) == 0 ||
+		register_stat2( "load", stat_name, (stat_var**)pt_get_10m_proc_load,
+		STAT_IS_FUNC, (void*)(long)pno, 0) != 0) {
+			LM_ERR("failed to add RT load stat for process %d\n",pno);
+			return -1;
+		}
+		name.s = stat_name;
+		name.len = strlen(stat_name);
+		pt[pno].load_10m = get_stat(&name);
+		pt[pno].load_10m->flags |= STAT_HIDDEN;
+
 	}
-	name.s = stat_name;
-	name.len = strlen(stat_name);
-	pt[pno].load.load_10m = get_stat(&name);
 
 	return 0;
 }

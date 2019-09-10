@@ -110,15 +110,19 @@ struct hep_data {
 	int oldest_chunk;
 };
 
-
 static cmd_export_t cmds[] = {
-	{"proto_init",            (cmd_function)proto_hep_init_udp,        0, 0, 0, 0},
-	{"proto_init",            (cmd_function)proto_hep_init_tcp,        0, 0, 0, 0},
-	{"load_hep",			  (cmd_function)bind_proto_hep,        1, 0, 0, 0},
-	{"trace_bind_api",        (cmd_function)hep_bind_trace_api,    1, 0, 0, 0},
-	{"correlate", (cmd_function)correlate_w, 5, correlate_fixup, 0,
+	{"proto_init", (cmd_function)proto_hep_init_udp, {{0,0,0}}, 0},
+	{"proto_init", (cmd_function)proto_hep_init_tcp, {{0,0,0}}, 0},
+	{"load_hep", (cmd_function)bind_proto_hep, {{0,0,0}}, 0},
+	{"trace_bind_api", (cmd_function)hep_bind_trace_api, {{0,0,0}}, 0},
+	{"correlate", (cmd_function)correlate_w, {
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR,0,0}, {0,0,0}},
 		REQUEST_ROUTE|FAILURE_ROUTE|ONREPLY_ROUTE|BRANCH_ROUTE|LOCAL_ROUTE},
-	{0,0,0,0,0,0}
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t params[] = {
@@ -170,7 +174,9 @@ struct module_exports exports = {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	0,				 /* load function */
 	&deps,            /* OpenSIPS module dependencies */
+	0,                /* OpenSIPS dependencies function */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	params,     /* module parameters */
@@ -183,6 +189,7 @@ struct module_exports exports = {
 	0,          /* response function */
 	destroy,	/* destroy function */
 	0,          /* per-child init function */
+	0           /* reload confirm function */
 };
 
 static int mod_init(void)
@@ -193,9 +200,14 @@ static int mod_init(void)
 		return -1;
 	}
 
+	if (init_hep_id() < 0) {
+		LM_ERR("could not initialize HEP id list!\n");
+		return -1;
+	}
+
 	if (payload_compression) {
 		load_compression =
-			(load_compression_f)find_export("load_compression", 1, 0);
+			(load_compression_f)find_export("load_compression", 0);
 		if (!load_compression) {
 			LM_ERR("can't bind compression module!\n");
 			return -1;
@@ -220,6 +232,7 @@ static int mod_init(void)
 static void destroy(void)
 {
 	free_hep_cbs();
+	destroy_hep_id();
 }
 
 void free_hep_context(void *ptr)
@@ -691,9 +704,9 @@ static int hep_tcp_send (struct socket_info* send_sock,
 	if (to) {
 		su2ip_addr(&ip, to);
 		port=su_getport(to);
-		n = tcp_conn_get(id,&ip, port, PROTO_HEP_TCP, &c, &fd);
+		n = tcp_conn_get(id,&ip, port, PROTO_HEP_TCP, NULL, &c, &fd);
 	} else if (id) {
-		n = tcp_conn_get(id, 0, 0, PROTO_NONE, &c, &fd);
+		n = tcp_conn_get(id, 0, 0, PROTO_NONE, NULL, &c, &fd);
 	} else {
 		LM_CRIT("tcp_send called with null id & to\n");
 		return -1;
@@ -726,6 +739,8 @@ static int hep_tcp_send (struct socket_info* send_sock,
 			if (n==0) {
 				/* mark the ID of the used connection (tracing purposes) */
 				last_outgoing_tcp_id = c->id;
+				send_sock->last_local_real_port = c->rcv.dst_port;
+				send_sock->last_remote_real_port = c->rcv.src_port;
 				/* connect is still in progress, break the sending
 				 * flow now (the actual write will be done when
 				 * connect will be completed */
@@ -765,6 +780,8 @@ static int hep_tcp_send (struct socket_info* send_sock,
 
 			/* mark the ID of the used connection (tracing purposes) */
 			last_outgoing_tcp_id = c->id;
+			send_sock->last_local_real_port = c->rcv.dst_port;
+			send_sock->last_remote_real_port = c->rcv.src_port;
 
 			/* we successfully added our write chunk - success */
 			tcp_conn_release(c, 0);
@@ -802,6 +819,8 @@ send_it:
 
 	/* mark the ID of the used connection (tracing purposes) */
 	last_outgoing_tcp_id = c->id;
+	send_sock->last_local_real_port = c->rcv.dst_port;
+	send_sock->last_remote_real_port = c->rcv.src_port;
 
 	tcp_conn_release(c, (n<len)?1:0/*pending data in async mode?*/ );
 
@@ -995,6 +1014,8 @@ static inline int hep_handle_req(struct tcp_req *req,
 			 * we can free it now */
 			pkg_free(req);
 		}
+
+		con->msg_attempts = 0;
 
 		if (size) {
 			memmove(req->buf, req->parsed, size);

@@ -126,6 +126,25 @@ modparam("event_flatstore", "file_permissions", "664")
 </programlisting>
 		</example>
 	</section>
+	<section id="param_suppress_event_name" xreflabel="suppress_event_name">
+		<title><varname>suppress_event_name</varname> (int)</title>
+		<para>
+			Suppresses the name of the event in the log file.
+		</para>
+		<para>
+		<emphasis>
+			Default value is <quote>0/OFF</quote> (the event's name is printed).
+		</emphasis>
+		</para>
+		<example>
+		<title>Set <varname>suppress_event_name</varname> parameter</title>
+		<programlisting format="linespecific">
+...
+modparam("event_flatstore", "suppress_event_name", 1)
+...
+</programlisting>
+		</example>
+	</section>
 	</section>
 	<section id="exported_functions" xreflabel="exported_functions">
 	<title>Exported Functions</title>
@@ -151,7 +170,7 @@ modparam("event_flatstore", "file_permissions", "664")
 		MI FIFO Command Format:
 		</para>
         <programlisting  format="linespecific">
-		opensipsctl fifo evi_flat_rotate _path_to_log_file_
+		opensips-cli -x mi evi_flat_rotate _path_to_log_file_
 		</programlisting>
 	</section>	
     </section>

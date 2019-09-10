@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 OpenSIPS Solutions
+ * Copyright (C) 2011-2019 OpenSIPS Solutions
  *
  * This file is part of opensips, a free SIP server.
  *
@@ -16,13 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- *
- * history:
- * ---------
- *  2011-09-xx  created (vlad-paiu)
  */
-
 
 #ifndef _CACHEDB_H
 #define _CACHEDB_H
@@ -48,6 +42,11 @@ typedef struct {
 	} val;
 } cdb_raw_entry;
 
+extern stat_var *cdb_total_queries;
+extern stat_var *cdb_slow_queries;
+
+int init_cdb_support(void);
+
 int cachedb_store_url(struct cachedb_url **list,char *val);
 void cachedb_free_url(struct cachedb_url *list);
 
@@ -70,7 +69,7 @@ typedef struct cachedb_funcs_t {
 	        int expires, int *new_val);
 	/* bi-dimensional array will be returned */
 	int (*raw_query) (cachedb_con *con, str *query, cdb_raw_entry ***reply,
-	                  int expected_key_no,int *reply_no);
+	                  int num_cols, int *num_rows);
 	int (*truncate) (cachedb_con *con);
 
 	int (*db_query_trans) (cachedb_con *con, const str *table,
@@ -160,5 +159,5 @@ int cachedb_bind_mod(str *url,cachedb_funcs *funcs);
 int cachedb_put_connection(str *cachedb_name,cachedb_con *con);
 
 void cachedb_end_connections(str *cachedb_name);
-void free_raw_fetch(cdb_raw_entry **reply, int no_val, int no_key);
+void free_raw_fetch(cdb_raw_entry **reply, int num_cols, int num_rows);
 #endif

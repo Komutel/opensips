@@ -55,7 +55,7 @@
 #include "udomain.h"         /* {insert,delete,get,release}_urecord */
 #include "urecord.h"         /* {insert,delete,get}_ucontact */
 #include "ucontact.h"        /* update_ucontact */
-#include "ureplication.h"
+#include "ul_cluster.h"
 #include "ul_mi.h"
 #include "ul_callback.h"
 #include "usrloc.h"
@@ -87,6 +87,7 @@ static void _synchronize_all_udomains(unsigned int ticks, void* param);
 static int child_init(int rank);  /*!< Per-child init function */
 static int mi_child_init(void);
 int check_runtime_config(void);
+int ul_deprec_shp(modparam_t _, void *modparam);
 
 //static int add_replication_dest(modparam_t type, void *val);
 
@@ -146,7 +147,9 @@ char *rr_persist_str;
 /*!< SQL write mode */
 enum ul_sql_write_mode sql_wmode = SQL_NO_WRITE;
 char *sql_wmode_str;
-int shared_pinging;
+
+enum ul_pinging_mode pinging_mode = PMD_COOPERATION;
+char *pinging_mode_str;
 
 int use_domain      = 0;   /*!< Whether usrloc should use domain part of aor */
 int desc_time_order = 0;   /*!< By default do not enable timestamp ordering */
@@ -186,10 +189,9 @@ int latency_event_min_us;
  * Exported functions
  */
 static cmd_export_t cmds[] = {
-	{"ul_bind_usrloc",        (cmd_function)bind_usrloc,        1, 0, 0, 0},
-	{0, 0, 0, 0, 0, 0}
+	{"ul_bind_usrloc", (cmd_function)bind_usrloc, {{0,0,0}},0},
+	{0,0,{{0,0,0}},0}
 };
-
 
 /*! \brief
  * Exported parameters
@@ -215,7 +217,8 @@ static param_export_t params[] = {
 	{"cluster_mode",       STR_PARAM, &cluster_mode_str  },
 	{"restart_persistency",STR_PARAM, &rr_persist_str    },
 	{"sql_write_mode",     STR_PARAM, &sql_wmode_str     },
-	{"shared_pinging",     INT_PARAM, &shared_pinging    },
+	{"shared_pinging",     INT_PARAM|USE_FUNC_PARAM, ul_deprec_shp },
+	{"pinging_mode",       STR_PARAM, &pinging_mode_str  },
 
 	{"use_domain",         INT_PARAM, &use_domain        },
 	{"desc_time_order",    INT_PARAM, &desc_time_order   },
@@ -234,7 +237,6 @@ static param_export_t params[] = {
 	{"cseq_delay",         INT_PARAM, &cseq_delay        },
 	{"hash_size",          INT_PARAM, &ul_hash_size      },
 	{"nat_bflag",          STR_PARAM, &nat_bflag_str     },
-	{"nat_bflag",          INT_PARAM, &nat_bflag         },
     /* data replication through clusterer using TCP binary packets */
 	{ "location_cluster",	INT_PARAM, &location_cluster   },
 	{ "skip_replicated_db_ops", INT_PARAM, &skip_replicated_db_ops   },
@@ -249,25 +251,43 @@ static stat_export_t mod_stats[] = {
 	{0,0,0}
 };
 
-
 static mi_export_t mi_cmds[] = {
-	{ MI_USRLOC_RM,           0, mi_usrloc_rm_aor,       0,                 0,
-				mi_child_init },
-	{ MI_USRLOC_RM_CONTACT,   0, mi_usrloc_rm_contact,   0,                 0,
-				mi_child_init },
-	{ MI_USRLOC_DUMP,         0, mi_usrloc_dump,         0,                 0,
-				0             },
-	{ MI_USRLOC_FLUSH,        0, mi_usrloc_flush,        MI_NO_INPUT_FLAG,  0,
-				mi_child_init },
-	{ MI_USRLOC_ADD,          0, mi_usrloc_add,          0,                 0,
-				mi_child_init },
-	{ MI_USRLOC_SHOW_CONTACT, 0, mi_usrloc_show_contact, 0,                 0,
-				mi_child_init },
-	{ MI_USRLOC_SYNC,         0, mi_usrloc_sync,         0,                 0,
-				mi_child_init },
-	{ MI_USRLOC_CL_SYNC,      0, mi_usrloc_cl_sync,      MI_NO_INPUT_FLAG,  0,
-				mi_child_init },
-	{ 0, 0, 0, 0, 0, 0}
+	{ MI_USRLOC_RM, 0, 0, mi_child_init, {
+		{mi_usrloc_rm_aor, {"table_name", "aor", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ MI_USRLOC_RM_CONTACT, 0, 0, mi_child_init, {
+		{mi_usrloc_rm_contact, {"table_name", "aor", "contact", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ MI_USRLOC_DUMP, 0, 0, 0, {
+		{w_mi_usrloc_dump, {0}},
+		{w_mi_usrloc_dump_1, {"brief", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ MI_USRLOC_FLUSH, 0, 0, mi_child_init, {
+		{mi_usrloc_flush, {0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ MI_USRLOC_ADD, 0, 0, mi_child_init, {
+		{mi_usrloc_add, {"table_name", "aor", "contact", "expires", "q",
+						 "unsused", "flags", "cflags", "methods", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ MI_USRLOC_SHOW_CONTACT, 0, 0, mi_child_init, {
+		{mi_usrloc_show_contact, {"table_name", "aor", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ MI_USRLOC_SYNC, 0, 0, mi_child_init, {
+		{mi_usrloc_sync_1, {"table_name", 0}},
+		{mi_usrloc_sync_2, {"table_name", "aor", 0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{ MI_USRLOC_CL_SYNC, 0, 0, mi_child_init, {
+		{mi_usrloc_cl_sync, {0}},
+		{EMPTY_MI_RECIPE}}
+	},
+	{EMPTY_MI_EXPORT}
 };
 
 static module_dependency_t *get_deps_db_mode(param_export_t *param)
@@ -319,7 +339,9 @@ struct module_exports exports = {
 	MOD_TYPE_DEFAULT,/*!< class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /*!< dlopen flags */
+	0,				 /*!< load function */
 	&deps,           /*!< OpenSIPS module dependencies */
+	0,               /*!< OpenSIPS dependencies function */
 	cmds,       /*!< Exported functions */
 	0,          /*!< Exported async functions */
 	params,     /*!< Export parameters */
@@ -331,7 +353,8 @@ struct module_exports exports = {
 	mod_init,   /*!< Module initialization function */
 	0,          /*!< Response function */
 	destroy,    /*!< Destroy function */
-	child_init  /*!< Child initialization function */
+	child_init, /*!< Child initialization function */
+	0           /*!< reload confirm function */
 };
 
 
@@ -462,8 +485,6 @@ static int mod_init(void)
 		}
 	}
 
-	fix_flag_name(nat_bflag_str, nat_bflag);
-
 	nat_bflag = get_flag_id_by_name(FLAG_TYPE_BRANCH, nat_bflag_str);
 
 	if (nat_bflag==(unsigned int)-1) {
@@ -480,32 +501,9 @@ static int mod_init(void)
 		return -1;
 	}
 
-	if (location_cluster < 0) {
-		LM_ERR("Invalid cluster id to replicate contacts to, must be 0 or "
-			"a positive number\n");
+	if (ul_init_cluster() < 0) {
+		LM_ERR("failed to init clustering support!\n");
 		return -1;
-	}
-
-	if (location_cluster) {
-		if (load_clusterer_api(&clusterer_api) != 0) {
-			LM_DBG("failed to find clusterer API - is clusterer module loaded?\n");
-			return -1;
-		}
-
-		/* register handler for processing usrloc packets to the clusterer module */
-		if (clusterer_api.register_capability(&contact_repl_cap,
-			receive_binary_packets, receive_cluster_event, location_cluster,
-			rr_persist == RRP_SYNC_FROM_CLUSTER? 1 : 0,
-			(cluster_mode == CM_FEDERATION
-			 || cluster_mode == CM_FEDERATION_CACHEDB) ?
-				NODE_CMP_EQ_SIP_ADDR : NODE_CMP_ANY) < 0) {
-			LM_ERR("cannot register callbacks to clusterer module!\n");
-			return -1;
-		}
-
-		if (rr_persist == RRP_SYNC_FROM_CLUSTER &&
-		    clusterer_api.request_sync(&contact_repl_cap, location_cluster, 0) < 0)
-			LM_ERR("Sync request failed\n");
 	}
 
 	init_flag = 1;
@@ -602,10 +600,6 @@ static int mi_child_init(void)
  */
 static void destroy(void)
 {
-	if (cdbc)
-		cdbf.destroy(cdbc);
-	cdbc = NULL;
-
 	/* we need to sync DB in order to flush the cache */
 	if (ul_dbh) {
 		ul_unlock_locks();
@@ -621,6 +615,10 @@ static void destroy(void)
 		}
 		ul_dbf.close(ul_dbh);
 	}
+
+	if (cdbc)
+		cdbf.destroy(cdbc);
+	cdbc = NULL;
 
 	free_all_udomains();
 	ul_destroy_locks();
@@ -701,6 +699,7 @@ int check_runtime_config(void)
 			cluster_mode = CM_FULL_SHARING;
 			rr_persist = RRP_SYNC_FROM_CLUSTER;
 			sql_wmode = SQL_NO_WRITE;
+
 		} else if (!strcasecmp(runtime_preset, "full-sharing-cachedb-cluster")) {
 			cluster_mode = CM_FULL_SHARING_CACHEDB;
 			rr_persist = RRP_NONE;
@@ -801,10 +800,13 @@ int check_runtime_config(void)
 
 			location_cluster = 0;
 		}
+
+		pinging_mode = PMD_OWNERSHIP;
 		break;
 
 	case CM_FEDERATION:
 		LM_ERR("usrloc 'federation' clustering not implemented yet! :(\n");
+		pinging_mode = PMD_OWNERSHIP;
 		return -1;
 
 	case CM_FEDERATION_CACHEDB:
@@ -823,12 +825,27 @@ int check_runtime_config(void)
 			LM_ERR("no cache database URL defined! ('cachedb_url')\n");
 			return -1;
 		}
+		pinging_mode = PMD_OWNERSHIP;
 		break;
 
 	case CM_FULL_SHARING:
 		if (!location_cluster) {
 			LM_ERR("'location_cluster' is not set!\n");
 			return -1;
+		}
+
+		if (pinging_mode_str) {
+			if (!strcasecmp(pinging_mode_str, "ownership"))
+				pinging_mode = PMD_OWNERSHIP;
+			else if (!strcasecmp(pinging_mode_str, "cooperation"))
+				pinging_mode = PMD_COOPERATION;
+			else {
+				LM_ERR("unrecognized 'pinging_mode': %s, defaulting to "
+				       "'cooperation'\n", pinging_mode_str);
+				pinging_mode = PMD_COOPERATION;
+			}
+		} else {
+			pinging_mode = PMD_COOPERATION;
 		}
 		break;
 
@@ -854,6 +871,8 @@ int check_runtime_config(void)
 			LM_ERR("no cache database URL defined! ('cachedb_url')\n");
 			return -1;
 		}
+
+		pinging_mode = PMD_COOPERATION;
 		break;
 
 	case CM_SQL_ONLY:
@@ -875,6 +894,7 @@ int check_runtime_config(void)
 
 			location_cluster = 0;
 		}
+		pinging_mode = PMD_COOPERATION;
 		break;
 	}
 
@@ -882,4 +902,17 @@ int check_runtime_config(void)
 	       db_mode, cluster_mode, rr_persist, sql_wmode);
 
 	return 0;
+}
+
+int ul_deprec_shp(modparam_t _, void *modparam)
+{
+	LM_NOTICE("the 'shared_pinging' module parameter has been deprecated "
+				"in favour of 'pinging_mode'\n");
+
+	if ((int *)modparam == 0)
+		pinging_mode = PMD_OWNERSHIP;
+	else
+		pinging_mode = PMD_COOPERATION;
+
+	return 1;
 }

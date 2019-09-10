@@ -34,7 +34,6 @@
 #include "../../sr_module.h"
 #include "../../ut.h"
 #include "../../timer.h"
-#include "../../mod_fix.h"
 #include "../../data_lump.h"
 #include "../../rw_locking.h"
 
@@ -112,9 +111,9 @@ str realm_prefix;
 int reg_use_domain = 0;
 
 static int mod_init(void);
+static int cfg_validate(void);
 
 static int domain_fixup(void** param);
-static int registrar_fixup(void** param, int param_no);
 
 int solve_avp_defs(void);
 
@@ -134,21 +133,19 @@ char *mp_ctid_insertion = "ct-param";
 str ctid_param = str_init("ctid");
 
 static cmd_export_t cmds[] = {
-	{ "mid_registrar_save", (cmd_function)mid_reg_save, 1,
-	  registrar_fixup, NULL, REQUEST_ROUTE },
-	{ "mid_registrar_save", (cmd_function)mid_reg_save, 2,
-	  registrar_fixup, NULL, REQUEST_ROUTE },
-	{ "mid_registrar_save", (cmd_function)mid_reg_save, 3,
-	  registrar_fixup, NULL, REQUEST_ROUTE },
-	{ "mid_registrar_save", (cmd_function)mid_reg_save, 4,
-	  registrar_fixup, NULL, REQUEST_ROUTE },
-	{ "mid_registrar_lookup", (cmd_function)mid_reg_lookup, 1,
-	  registrar_fixup, NULL, REQUEST_ROUTE },
-	{ "mid_registrar_lookup", (cmd_function)mid_reg_lookup, 2,
-	  registrar_fixup, NULL, REQUEST_ROUTE },
-	{ "mid_registrar_lookup", (cmd_function)mid_reg_lookup, 3,
-	  registrar_fixup, NULL, REQUEST_ROUTE },
-	{ NULL, NULL, 0, NULL, NULL, 0 }
+	{"mid_registrar_save", (cmd_function)mid_reg_save, {
+		{CMD_PARAM_STR|CMD_PARAM_STATIC, domain_fixup, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0 ,0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_INT|CMD_PARAM_OPT, 0, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{"mid_registrar_lookup", (cmd_function)mid_reg_lookup, {
+		{CMD_PARAM_STR|CMD_PARAM_STATIC, domain_fixup, 0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0 ,0},
+		{CMD_PARAM_STR|CMD_PARAM_OPT, 0, 0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{0,0,{{0,0,0}},0}
 };
 
 static param_export_t mod_params[] = {
@@ -157,7 +154,6 @@ static param_export_t mod_params[] = {
 	{ "min_expires",          INT_PARAM, &min_expires },
 	{ "max_expires",          INT_PARAM, &max_expires },
 	{ "default_q",            INT_PARAM, &default_q },
-	{ "tcp_persistent_flag",  INT_PARAM, &tcp_persistent_flag },
 	{ "tcp_persistent_flag",  STR_PARAM, &tcp_persistent_flag_s },
 	{ "realm_prefix",         STR_PARAM, &realm_pref },
 	{ "case_sensitive",       INT_PARAM, &case_sensitive },
@@ -191,7 +187,9 @@ struct module_exports exports= {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	0,				 /* load function */
 	&deps,           /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,            /* exported functions */
 	NULL,               /* exported async functions */
 	mod_params,      /* param exports */
@@ -203,7 +201,8 @@ struct module_exports exports= {
 	mod_init,        /* module initialization function */
 	NULL,               /* reply processing function */
 	NULL,
-	NULL       /* per-child init function */
+	NULL,       /* per-child init function */
+	cfg_validate/* reload confirm function */
 };
 
 /*! \brief
@@ -212,11 +211,18 @@ struct module_exports exports= {
 static int domain_fixup(void** param)
 {
 	udomain_t* d;
+	str dom_s;
 
-	if (ul_api.register_udomain((char*)*param, &d) < 0) {
+	if (pkg_nt_str_dup(&dom_s, (str*)*param) < 0)
+		return E_OUT_OF_MEM;
+
+	if (ul_api.register_udomain(dom_s.s, &d) < 0) {
 		LM_ERR("failed to register domain\n");
+		pkg_free(dom_s.s);
 		return E_UNSPEC;
 	}
+
+	pkg_free(dom_s.s);
 
 	*param = (void*)d;
 	return 0;
@@ -235,28 +241,6 @@ static int mid_reg_post_script(struct sip_msg *foo, void *bar)
 	return SCB_RUN_ALL;
 }
 
-/*! \brief
- * Fixup for "save"+"lookup" functions - domain, flags, AOR params
- */
-static int registrar_fixup(void** param, int param_no)
-{
-	switch (param_no) {
-	case 1:
-		/* table name */
-		return domain_fixup(param);
-	case 2:
-		/* flags */
-		return fixup_spve(param);
-	case 3:
-		/* AoR */
-		return fixup_sgp(param);
-	case 4:
-		/* outgoing registration interval */
-		return fixup_igp(param);
-	}
-
-	return E_BUG;
-}
 
 static int mod_init(void)
 {
@@ -277,6 +261,13 @@ static int mod_init(void)
 
 	if(load_sig_api(&sig_api)< 0) {
 		LM_ERR("can't load signaling functions\n");
+		return -1;
+	}
+
+	if (is_script_func_used("mid_registrar_save",5) && !ul_api.tags_in_use()) {
+		LM_ERR("as per your current usrloc module configuration, "
+				"mid_registrar_save() ownership tags "
+				"will be completely ignored!\n");
 		return -1;
 	}
 
@@ -331,8 +322,6 @@ static int mod_init(void)
 	if (gruu_secret.s)
 		gruu_secret.len = strlen(gruu_secret.s);
 
-	/* fix the flags */
-	fix_flag_name(tcp_persistent_flag_s, tcp_persistent_flag);
 	tcp_persistent_flag = get_flag_id_by_name(FLAG_TYPE_MSG, tcp_persistent_flag_s);
 	tcp_persistent_flag = (tcp_persistent_flag != -1) ? (1 << tcp_persistent_flag) : 0;
 
@@ -375,6 +364,18 @@ static int mod_init(void)
 
 	return 0;
 }
+
+
+static int cfg_validate(void)
+{
+	if (is_script_func_used("mid_registrar_save", 5) && !ul_api.tags_in_use()){
+		LM_ERR("mid_registrar_save() with sharing tag was found, but the "
+			"module's configuration has no tag support, better restart\n");
+		return 0;
+	}
+	return 1;
+}
+
 
 void set_ct(struct mid_reg_info *ct)
 {
@@ -477,6 +478,9 @@ void mri_free(struct mid_reg_info *mri)
 	if (mri->user_agent.s)
 		shm_free(mri->user_agent.s);
 
+	if (mri->ownership_tag.s)
+		shm_free(mri->ownership_tag.s);
+
 	free_ct_mappings(&mri->ct_mappings);
 
 #ifdef EXTRA_DEBUG
@@ -551,6 +555,9 @@ str get_extra_ct_params(struct sip_msg *msg)
 		LM_ERR("failed to get extra params\n");
 		return null_str;
 	}
+
+	if (extra_params.flags & PV_VAL_NULL)
+		return null_str;
 
 	if (!(extra_params.flags & PV_VAL_STR)) {
 		LM_ERR("skipping extra Contact params with int value (%d)\n",

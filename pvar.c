@@ -132,7 +132,39 @@ pv_context_t* pv_get_context(str* name);
 pv_context_t* add_pv_context(str* name, pv_contextf_t get_context);
 static int pvc_before_check = 1;
 
+int pv_print_buf_size = 20000;
+#define PV_PRINT_BUF_NO   7
+str *pv_print_buf;
 
+#define is_pv_print_buf(p) (p >= (char *)pv_print_buf && \
+			p <= (char *)pv_print_buf + \
+				PV_PRINT_BUF_NO * (sizeof(*pv_print_buf) + pv_print_buf_size))
+
+int init_pvar_support(void)
+{
+	int i;
+
+	/* check pv context list */
+	if (pv_contextlist_check() != 0) {
+		LM_ERR("used pv context that was not defined\n");
+		return -1;
+	}
+
+	pv_print_buf = pkg_malloc(PV_PRINT_BUF_NO * (sizeof(str)
+	                               + pv_print_buf_size));
+	if (!pv_print_buf) {
+		LM_ERR("oom\n");
+		return -1;
+	}
+
+	for (i = 0; i < PV_PRINT_BUF_NO; i++) {
+		pv_print_buf[i].s = (char *)(pv_print_buf + PV_PRINT_BUF_NO)
+		                              + i * pv_print_buf_size;
+		pv_print_buf[i].len = pv_print_buf_size;
+	}
+
+	return 0;
+}
 
 /* route param variable */
 static int pv_get_param(struct sip_msg *msg,  pv_param_t *ip, pv_value_t *res);
@@ -309,14 +341,15 @@ static int pv_get_formated_time(struct sip_msg *msg, pv_param_t *param,
 		pv_value_t *res)
 {
 	static char buf[128];
+	struct tm ltime;
 	time_t t;
 
 	if(msg==NULL)
 		return -1;
 
 	time( &t );
-	res->rs.len = strftime( buf, 127, param->pvn.u.isname.name.s.s,
-			localtime( &t ) );
+	localtime_r(&t, &ltime);
+	res->rs.len = strftime( buf, 127, param->pvn.u.isname.name.s.s, &ltime);
 
 	if (res->rs.len<=0)
 		return pv_get_null(msg, param, res);
@@ -326,9 +359,15 @@ static int pv_get_formated_time(struct sip_msg *msg, pv_param_t *param,
 	return 0;
 }
 
+#define CTIME_BUFFER_NO 5
+#define CTIME_BUFFER_SIZE 26
+
 static int pv_get_timef(struct sip_msg *msg, pv_param_t *param,
 		pv_value_t *res)
 {
+	static char ctime_bufs[CTIME_BUFFER_NO][CTIME_BUFFER_SIZE];
+	static char *buf;
+	static int ctime_buf_no = 0;
 	time_t t;
 	str s;
 
@@ -336,7 +375,9 @@ static int pv_get_timef(struct sip_msg *msg, pv_param_t *param,
 		return -1;
 
 	t = time(NULL);
-	s.s = ctime(&t);
+	buf = ctime_bufs[ctime_buf_no];
+	ctime_buf_no = (ctime_buf_no + 1) % CTIME_BUFFER_NO;
+	s.s = ctime_r(&t, buf);
 	s.len = strlen(s.s)-1;
 	return pv_get_strintval(msg, param, res, &s, (int)t);
 }
@@ -2035,7 +2076,7 @@ static int pv_get_avp(struct sip_msg *msg,  pv_param_t *param, pv_value_t *res)
 		if(avp->flags & AVP_VAL_STR) {
 			res->rs = avp_value.s;
 		} else if(avp->flags & AVP_VAL_NULL) {
-			res->rs.s = NULL;
+			memset(&res->rs, 0, sizeof res->rs);
 		} else {
 			res->rs.s = sint2str(avp_value.n, &res->rs.len);
 		}
@@ -2054,7 +2095,7 @@ static int pv_get_avp(struct sip_msg *msg,  pv_param_t *param, pv_value_t *res)
 			if(avp->flags & AVP_VAL_STR) {
 				res->rs = avp_value.s;
 			} else if(avp->flags & AVP_VAL_NULL) {
-				res->rs.s = NULL;
+				memset(&res->rs, 0, sizeof res->rs);
 			} else {
 				res->rs.s = sint2str(avp_value.n, &res->rs.len);
 			}
@@ -2652,8 +2693,6 @@ error:
 int pv_set_dsturi(struct sip_msg* msg, pv_param_t *param,
 		int op, pv_value_t *val)
 {
-	struct action  act;
-
 	if(msg==NULL || param==NULL)
 	{
 		LM_ERR("bad parameters\n");
@@ -2662,13 +2701,8 @@ int pv_set_dsturi(struct sip_msg* msg, pv_param_t *param,
 
 	if(val == NULL)
 	{
-		memset(&act, 0, sizeof(act));
-		act.type = RESET_DSTURI_T;
-		if (do_action(&act, msg)<0)
-		{
-			LM_ERR("error - do action failed)\n");
-			goto error;
-		}
+		reset_dst_uri(msg);
+
 		return 1;
 	}
 	if(!(val->flags&PV_VAL_STR))
@@ -2737,8 +2771,6 @@ int pv_set_ru_q(struct sip_msg* msg, pv_param_t *param,
 int pv_set_ruri_user(struct sip_msg* msg, pv_param_t *param,
 		int op, pv_value_t *val)
 {
-	struct action  act;
-
 	if(msg==NULL || param==NULL)
 	{
 		LM_ERR("bad parameters\n");
@@ -2747,44 +2779,26 @@ int pv_set_ruri_user(struct sip_msg* msg, pv_param_t *param,
 
 	if(val == NULL)
 	{
-		memset(&act, 0, sizeof(act));
-		act.type = SET_USER_T;
-		act.elem[0].type = STRING_ST;
-		act.elem[0].u.string = "";
-		if (do_action(&act, msg)<0)
-		{
-			LM_ERR("do action failed)\n");
-			goto error;
-		}
-		return 0;
+		val->rs = str_empty;
 	}
 
 	if(!(val->flags&PV_VAL_STR))
 	{
 		LM_ERR("str value required to set R-URI user\n");
-		goto error;
+		return -1;
 	}
 
-	memset(&act, 0, sizeof(act));
-	act.elem[0].type = STR_ST;
-	act.elem[0].u.s = val->rs;
-	act.type = SET_USER_T;
-	if (do_action(&act, msg)<0)
-	{
-		LM_ERR("do action failed\n");
-		goto error;
+	if (rewrite_ruri(msg, &val->rs, 0, RW_RURI_USER) < 0) {
+		LM_ERR("Failed to set R-URI user\n");
+		return -1;
 	}
 
 	return 0;
-error:
-	return -1;
 }
 
 int pv_set_ruri_host(struct sip_msg* msg, pv_param_t *param,
 		int op, pv_value_t *val)
 {
-	struct action  act;
-
 	if(msg==NULL || param==NULL || val==NULL)
 	{
 		LM_ERR("bad parameters\n");
@@ -2794,29 +2808,20 @@ int pv_set_ruri_host(struct sip_msg* msg, pv_param_t *param,
 	if(!(val->flags&PV_VAL_STR))
 	{
 		LM_ERR("str value required to set R-URI hostname\n");
-		goto error;
+		return -1;
 	}
 
-	memset(&act, 0, sizeof(act));
-	act.elem[0].type = STR_ST;
-	act.elem[0].u.s = val->rs;
-	act.type = SET_HOST_T;
-	if (do_action(&act, msg)<0)
-	{
-		LM_ERR("do action failed\n");
-		goto error;
+	if (rewrite_ruri(msg, &val->rs, 0, RW_RURI_HOST) < 0) {
+		LM_ERR("Failed to set R-URI hostname\n");
+		return -1;
 	}
 
 	return 0;
-error:
-	return -1;
 }
 
 int pv_set_dsturi_host(struct sip_msg* msg, pv_param_t *param,
 		int op, pv_value_t *val)
 {
-	struct action act;
-
 	if(msg==NULL || param==NULL || val==NULL)
 	{
 		LM_ERR("bad parameters\n");
@@ -2826,30 +2831,20 @@ int pv_set_dsturi_host(struct sip_msg* msg, pv_param_t *param,
 	if(!(val->flags&PV_VAL_STR))
 	{
 		LM_ERR("str value required to set DST-URI hostname\n");
-		goto error;
+		return -1;
 	}
 
-	memset(&act, 0, sizeof(act));
-	act.elem[0].type = STR_ST;
-	act.elem[0].u.s = val->rs;
-	act.type = SET_DSTHOST_T;
-
-	if (do_action(&act, msg)<0)
-	{
-		LM_ERR("do action failed\n");
-		goto error;
+	if (set_dst_host_port(msg, &val->rs, NULL) < 0) {
+		LM_ERR("Failed to set DST-URI host\n");
+		return -1;
 	}
 
 	return 0;
-error:
-	return -1;
 }
 
 int pv_set_dsturi_port(struct sip_msg* msg, pv_param_t *param,
 		int op, pv_value_t *val)
 {
-	struct action  act;
-
 	if(msg==NULL || param==NULL)
 	{
 		LM_ERR("bad parameters\n");
@@ -2858,38 +2853,18 @@ int pv_set_dsturi_port(struct sip_msg* msg, pv_param_t *param,
 
 	if(val == NULL)
 	{
-		memset(&act, 0, sizeof(act));
-		act.type = SET_DSTPORT_T;
-		act.elem[0].type = STR_ST;
-		act.elem[0].u.s.s = "";
-		act.elem[0].u.s.len = 0;
-		if (do_action(&act, msg)<0)
-		{
-			LM_ERR("do action failed)\n");
-			goto error;
-		}
-		return 0;
-	}
-
-	if(!(val->flags&PV_VAL_STR))
+		val->rs = str_empty;
+	} else if(!(val->flags&PV_VAL_STR))
 	{
 		val->rs.s = int2str(val->ri, &val->rs.len);
-		val->flags |= PV_VAL_STR;
 	}
 
-	memset(&act, 0, sizeof(act));
-	act.elem[0].type = STR_ST;
-	act.elem[0].u.s = val->rs;
-	act.type = SET_DSTPORT_T;
-	if (do_action(&act, msg)<0)
-	{
-		LM_ERR("do action failed\n");
-		goto error;
+	if (set_dst_host_port(msg, NULL, &val->rs) < 0) {
+		LM_ERR("Failed to set DST-URI port\n");
+		return -1;
 	}
 
 	return 0;
-error:
-	return -1;
 }
 
 
@@ -2898,8 +2873,6 @@ error:
 int pv_set_ruri_port(struct sip_msg* msg, pv_param_t *param,
 		int op, pv_value_t *val)
 {
-	struct action  act;
-
 	if(msg==NULL || param==NULL)
 	{
 		LM_ERR("bad parameters\n");
@@ -2908,38 +2881,18 @@ int pv_set_ruri_port(struct sip_msg* msg, pv_param_t *param,
 
 	if(val == NULL)
 	{
-		memset(&act, 0, sizeof(act));
-		act.type = SET_PORT_T;
-		act.elem[0].type = STR_ST;
-		act.elem[0].u.s.s = "";
-		act.elem[0].u.s.len = 0;
-		if (do_action(&act, msg)<0)
-		{
-			LM_ERR("do action failed)\n");
-			goto error;
-		}
-		return 0;
+		val->rs = str_empty;
 	}
 
 	if(!(val->flags&PV_VAL_STR))
-	{
 		val->rs.s = int2str(val->ri, &val->rs.len);
-		val->flags |= PV_VAL_STR;
-	}
 
-	memset(&act, 0, sizeof(act));
-	act.elem[0].type = STR_ST;
-	act.elem[0].u.s = val->rs;
-	act.type = SET_PORT_T;
-	if (do_action(&act, msg)<0)
-	{
-		LM_ERR("do action failed\n");
-		goto error;
+	if (rewrite_ruri(msg, &val->rs, 0, RW_RURI_PORT) < 0) {
+		LM_ERR("Failed to set R-URI hostname\n");
+		return -1;
 	}
 
 	return 0;
-error:
-	return -1;
 }
 
 
@@ -3064,7 +3017,7 @@ int pv_set_branch_fields(struct sip_msg* msg, pv_param_t *param,
 					return -1;
 				}
 				set_sip_defaults( port, proto);
-				si = grep_sock_info(&host, (unsigned short)port,
+				si = grep_internal_sock_info(&host, (unsigned short)port,
 					(unsigned short)proto);
 				if (si==NULL)
 					return -1;
@@ -3108,7 +3061,8 @@ int pv_set_force_sock(struct sip_msg* msg, pv_param_t *param,
 		goto error;
 	}
 	set_sip_defaults( port, proto);
-	si = grep_sock_info(&host, (unsigned short)port, (unsigned short)proto);
+	si = grep_internal_sock_info(&host, (unsigned short)port,
+		(unsigned short)proto);
 	if (si!=NULL)
 	{
 		msg->force_send_socket = si;
@@ -3393,7 +3347,7 @@ int pv_get_log_level(struct sip_msg *msg,  pv_param_t *param, pv_value_t *res)
 	}
 
 	res->ri = *log_level;
-	res->rs.s = int2str( (unsigned long)res->ri, &l);
+	res->rs.s = sint2str( (long)res->ri, &l);
 	res->rs.len = l;
 
 	res->flags = PV_VAL_STR|PV_VAL_INT|PV_TYPE_INT;
@@ -3401,40 +3355,47 @@ int pv_get_log_level(struct sip_msg *msg,  pv_param_t *param, pv_value_t *res)
 	return 0;
 }
 
+int pv_set_xlog_level(struct sip_msg* msg, pv_param_t *param, int op,
+															pv_value_t *val)
+{
+	if(param==NULL)
+	{
+		LM_ERR("bad parameters\n");
+		return -1;
+	}
+
+	if(val==NULL || (val->flags&(PV_VAL_NULL|PV_VAL_NONE))!=0) {
+		/* reset the value to default */
+		reset_xlog_level();
+	} else {
+		if ((val->flags&PV_TYPE_INT)==0) {
+			LM_ERR("input for $xlog_level found not to be an integer\n");
+			return -1;
+		}
+		set_local_xlog_level( val->ri );
+	}
+
+	return 0;
+}
+
 int pv_get_xlog_level(struct sip_msg *msg,  pv_param_t *param, pv_value_t *res)
 {
-#define _set_static_string(_s,_ss) {_s.s=_ss;_s.len=sizeof(_ss)-1;}
+	int l;
+
+	if (param==NULL) {
+		LM_CRIT("BUG - bad parameters\n");
+		return -1;
+	}
+
 	if(res == NULL) {
 		return -1;
 	}
 
-	switch(xlog_level) {
-	case L_ALERT:
-		_set_static_string( res->rs, DP_ALERT_TEXT);
-		break;
-	case L_CRIT:
-		_set_static_string( res->rs, DP_CRIT_TEXT);
-		break;
-	case L_ERR:
-		_set_static_string( res->rs, DP_ERR_TEXT);
-		break;
-	case L_WARN:
-		_set_static_string( res->rs, DP_WARN_TEXT);
-		break;
-	case L_NOTICE:
-		_set_static_string( res->rs, DP_NOTICE_TEXT);
-		break;
-	case L_INFO:
-		_set_static_string( res->rs, DP_INFO_TEXT);
-		break;
-	case L_DBG:
-		_set_static_string( res->rs, DP_DBG_TEXT);
-		break;
-	default:
-		return pv_get_null(msg, param, res);
-	}
+	res->ri = *xlog_level;
+	res->rs.s = sint2str( (long)res->ri, &l);
+	res->rs.len = l;
 
-	res->flags = PV_VAL_STR;
+	res->flags = PV_VAL_STR|PV_VAL_INT|PV_TYPE_INT;
 
 	return 0;
 }
@@ -3778,8 +3739,8 @@ static pv_export_t _pv_names_table[] = {
 		0, 0, 0, 0 },
 	{{"cfg_file", sizeof("cfg_file")-1}, PVT_CFG_FILE_NAME, pv_get_cfg_file_name, 0,
 	0, 0, 0, 0 },
-	{{"xlog_level", sizeof("xlog_level")-1}, PVT_XLOG_LEVEL, pv_get_xlog_level, 0,
-	0, 0, 0, 0 },
+	{{"xlog_level", sizeof("xlog_level")-1}, PVT_XLOG_LEVEL, pv_get_xlog_level,
+		pv_set_xlog_level, 0, 0, 0, 0 },
 	{{0,0}, 0, 0, 0, 0, 0, 0, 0}
 };
 
@@ -4493,7 +4454,12 @@ int pv_printf(struct sip_msg* msg, pv_elem_p list, char *buf, int *len)
 	goto done;
 
 overflow:
-	LM_ERR("buffer overflow -- increase the buffer size from [%d]...\n",*len);
+	if (is_pv_print_buf(buf))
+		LM_ERR("buffer too small -- increase 'pv_print_buf_size' from [%d]\n",
+				*len);
+	else
+		LM_ERR("buffer too small -- increase the buffer size "
+				"from [%d]...\n", *len);
 	return -1;
 
 done:
@@ -4611,25 +4577,21 @@ void pv_value_destroy(pv_value_t *val)
 	memset(val, 0, sizeof(pv_value_t));
 }
 
-#define PV_PRINT_BUF_SIZE  1024
-#define PV_PRINT_BUF_NO    7
-/*IMPORTANT NOTE - even if the function prints and returns a static buffer, it
- * has built-in support for 3 levels of nesting (or concurrent usage).
- * If you think it's not enough for you, either use pv_printf() directly,
- * either increase PV_PRINT_BUF_NO   --bogdan */
+/* IMPORTANT NOTE - even if the function prints and returns a static buffer, it
+ * has built-in support for PV_PRINTF_BUF_NO levels of nesting
+ * (or concurrent usage).  If you think it's not enough for you, either use
+ * pv_printf() directly, either increase PV_PRINT_BUF_NO   --bogdan */
 int pv_printf_s(struct sip_msg* msg, pv_elem_p list, str *s)
 {
 	static int buf_itr = 0;
-	static char buf[PV_PRINT_BUF_NO][PV_PRINT_BUF_SIZE];
 
 	if (list->next==0 && list->spec.getf==0) {
 		*s = list->text;
 		return 0;
 	} else {
-		s->s = buf[buf_itr];
-		s->len = PV_PRINT_BUF_SIZE;
-		buf_itr = (buf_itr+1)%PV_PRINT_BUF_NO;
-		return pv_printf( msg, list, s->s, &s->len);
+		*s = pv_print_buf[buf_itr];
+		buf_itr = (buf_itr + 1) % PV_PRINT_BUF_NO;
+		return pv_printf(msg, list, s->s, &s->len);
 	}
 }
 
@@ -5109,10 +5071,12 @@ static int pv_parse_param_name(pv_spec_p sp, str *in)
 	/* always an int type from now */
 	sp->pvp.pvn.u.isname.type = 0;
 	sp->pvp.pvn.type = PV_NAME_INTSTR;
+	/* do our best to convert it to an index */
 	if (str2int(in, (unsigned int *)&sp->pvp.pvn.u.isname.name.n) < 0)
 	{
-		LM_ERR("bad param index [%.*s]\n", in->len, in->s);
-		return -1;
+		/* remember it was a string, so we can retrieve it later */
+		sp->pvp.pvn.u.isname.name.s = *in;
+		sp->pvp.pvn.u.isname.type = AVP_NAME_STR;
 	}
 	return 0;
 
@@ -5120,93 +5084,12 @@ static int pv_parse_param_name(pv_spec_p sp, str *in)
 
 static int pv_get_param(struct sip_msg *msg,  pv_param_t *ip, pv_value_t *res)
 {
-	int index;
-	pv_value_t tv;
-
 	if (!ip)
 	{
 		LM_ERR("null parameter received\n");
 		return -1;
 	}
-
-	if (route_rec_level == -1 || !route_params[route_rec_level] || route_params_number[route_rec_level] == 0)
-	{
-		LM_DBG("no parameter specified for this route\n");
-		return pv_get_null(msg, ip, res);
-	}
-
-	if(ip->pvn.type==PV_NAME_INTSTR)
-	{
-		index = ip->pvn.u.isname.name.n;
-	} else
-	{
-		/* pvar -> it might be another $param variable! */
-		route_rec_level--;
-		if(pv_get_spec_value(msg, (pv_spec_p)(ip->pvn.u.dname), &tv)!=0)
-		{
-			LM_ERR("cannot get spec value\n");
-			return -1;
-		}
-		route_rec_level++;
-
-		if(tv.flags&PV_VAL_NULL || tv.flags&PV_VAL_EMPTY)
-		{
-			LM_ERR("null or empty name\n");
-			return -1;
-		}
-		if (!(tv.flags&PV_VAL_INT) || str2int(&tv.rs,(unsigned int*)&index) < 0)
-		{
-			LM_ERR("invalid index <%.*s>\n", tv.rs.len, tv.rs.s);
-			return -1;
-		}
-	}
-
-	if (index < 1 || index > route_params_number[route_rec_level])
-	{
-		LM_DBG("no such parameter index %d\n", index);
-		return pv_get_null(msg, ip, res);
-	}
-
-	/* the parameters start at 0, whereas the index starts from 1 */
-	index--;
-	switch (route_params[route_rec_level][index].type)
-	{
-
-	case NULLV_ST:
-		res->rs.s = NULL;
-		res->rs.len = res->ri = 0;
-		res->flags = PV_VAL_NULL;
-		break;
-
-	case STRING_ST:
-		res->rs.s = route_params[route_rec_level][index].u.string;
-		res->rs.len = strlen(res->rs.s);
-		res->flags = PV_VAL_STR;
-		break;
-
-	case NUMBER_ST:
-		res->rs.s = int2str(route_params[route_rec_level][index].u.number, &res->rs.len);
-		res->ri = route_params[route_rec_level][index].u.number;
-		res->flags = PV_VAL_STR|PV_VAL_INT|PV_TYPE_INT;
-		break;
-
-	case SCRIPTVAR_ST:
-		route_rec_level--;
-		if(pv_get_spec_value(msg, (pv_spec_p)route_params[route_rec_level + 1][index].u.data, res)!=0)
-		{
-			LM_ERR("cannot get spec value\n");
-			return -1;
-		}
-		route_rec_level++;
-		break;
-
-		default:
-			LM_ALERT("BUG: invalid parameter type %d\n",
-					 route_params[route_rec_level][index].type);
-			return -1;
-	}
-
-	return 0;
+	return route_params_run(msg, ip, res);
 }
 
 void destroy_argv_list(void)

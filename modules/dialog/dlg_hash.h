@@ -42,6 +42,8 @@
 #include "../../locking.h"
 #include "../../context.h"
 #include "../../mi/mi.h"
+#include "../../lib/dbg/struct_hist.h"
+
 #include "dlg_timer.h"
 #include "dlg_cb.h"
 #include "dlg_vals.h"
@@ -103,7 +105,8 @@ struct dlg_leg {
 	str route_set;
 	str contact;    /* this leg's Contact URI (most recent version) */
 	str adv_contact;	/* topology hiding advertised contact towards this leg - full header */
-	str adv_sdp;		/* latest SDP advertised towards this leg ( full body ), after all OpenSIPS changes */
+	str in_sdp;			/* latest SDP advertised by the uac ( full body ), after all OpenSIPS changes */
+	str out_sdp;		/* latest SDP advertised towards this leg ( full body ), after all OpenSIPS changes */
 	str route_uris[64];
 	int nr_uris;
 	unsigned int last_gen_cseq; /* FIXME - think this can be atomic_t to avoid locking */
@@ -162,6 +165,11 @@ struct dlg_cell
 	struct dlg_head_cbl  cbs;
 	struct dlg_profile_link *profile_links;
 	struct dlg_val       *vals;
+	str                  shtag;
+
+#ifdef DBG_DIALOG
+	struct struct_hist   *hist;
+#endif
 };
 
 
@@ -184,9 +192,12 @@ struct dlg_table
 	gen_lock_set_t     *locks;
 };
 
-
+extern stat_var *active_dlgs;
+extern stat_var *early_dlgs;
+extern struct struct_hist_list *dlg_hist;
 extern struct dlg_table *d_table;
 extern int ctx_dlg_idx;
+extern int dlg_enable_stats;
 
 #define callee_idx(_dlg) \
 	(((_dlg)->legs_no[DLG_LEG_200OK]==0)? \
@@ -270,19 +281,32 @@ static inline str* dlg_leg_to_uri(struct dlg_cell *dlg,int leg_no)
 void unlink_unsafe_dlg(struct dlg_entry *d_entry, struct dlg_cell *dlg);
 void destroy_dlg(struct dlg_cell *dlg);
 
+#ifdef DBG_DIALOG
+#define DBG_REF(dlg, cnt) \
+	sh_log((dlg)->hist, DLG_REF, "h=%d, ref %d with +%d", \
+	       (dlg)->h_entry, (dlg)->ref, (cnt));
+#define DBG_UNREF(dlg, cnt) \
+	sh_log((dlg)->hist, DLG_UNREF, "h=%d, unref %d with -%d", \
+	       (dlg)->h_entry, (dlg)->ref, (cnt));
+#define DBG_FLUSH(dlg) sh_flush((dlg)->hist)
+#else
+#define DBG_REF(dlg, cnt)
+#define DBG_UNREF(dlg, cnt)
+#define DBG_FLUSH(dlg)
+#endif
+
 #define ref_dlg_unsafe(_dlg,_cnt)     \
 	do { \
+		DBG_REF(_dlg, _cnt); \
 		(_dlg)->ref += (_cnt); \
-		LM_DBG("ref dlg %p with %d -> %d\n", \
-			(_dlg),(_cnt),(_dlg)->ref); \
 	}while(0)
 
 #define unref_dlg_unsafe(_dlg,_cnt,_d_entry)   \
 	do { \
+		DBG_UNREF(_dlg, _cnt); \
 		(_dlg)->ref -= (_cnt); \
-		LM_DBG("unref dlg %p with %d -> %d in entry %p\n",\
-			(_dlg),(_cnt),(_dlg)->ref,(_d_entry));\
 		if ((_dlg)->ref<0) {\
+			DBG_FLUSH(_dlg); \
 			LM_CRIT("bogus ref %d with cnt %d for dlg %p [%u:%u] "\
 				"with clid '%.*s' and tags '%.*s' '%.*s'\n",\
 				(_dlg)->ref, _cnt, _dlg,\
@@ -290,10 +314,10 @@ void destroy_dlg(struct dlg_cell *dlg);
 				(_dlg)->callid.len, (_dlg)->callid.s,\
 				dlg_leg_print_info(_dlg, DLG_CALLER_LEG, tag), \
 				dlg_leg_print_info(_dlg, callee_idx(_dlg), tag)); \
+			abort(); \
 		}\
 		if ((_dlg)->ref<=0) { \
 			unlink_unsafe_dlg( _d_entry, _dlg);\
-			LM_DBG("ref <=0 for dialog %p, destroying it\n",_dlg);\
 			destroy_dlg(_dlg);\
 		}\
 	}while(0)
@@ -306,7 +330,7 @@ void destroy_dlg(struct dlg_cell *dlg);
 	({ \
 		char *___p; \
 		int ___flags = 0; \
-		for (___p=(input).s; ___p < (input).s + (input).len; ___p++) \
+		for (___p=(input)->s; ___p < (input)->s + (input)->len; ___p++) \
 		{ \
 			switch (*___p) \
 			{ \
@@ -358,8 +382,8 @@ struct dlg_cell* build_new_dlg(str *callid, str *from_uri,
 int dlg_clone_callee_leg(struct dlg_cell *dlg, int cloned_leg_idx);
 
 int dlg_update_leg_info(int leg_idx, struct dlg_cell *dlg, str* tag, str *rr,
-		str *contact,str *cseq, struct socket_info *sock,
-		str *mangled_from,str *mangled_to,str *sdp);
+		str *contact, str *adv_ct, str *cseq, struct socket_info *sock,
+		str *mangled_from,str *mangled_to,str *in_sdp, str *out_sdp);
 
 int dlg_update_cseq(struct dlg_cell *dlg, unsigned int leg, str *cseq,
 						int field_type);
@@ -373,20 +397,66 @@ struct dlg_cell* get_dlg(str *callid, str *ftag, str *ttag,
 
 struct dlg_cell* get_dlg_by_val(str *attr, str *val);
 
-struct dlg_cell* get_dlg_by_callid( str *callid);
+struct dlg_cell* get_dlg_by_callid( str *callid, int active_only);
 
 void link_dlg(struct dlg_cell *dlg, int n);
 
-void unref_dlg(struct dlg_cell *dlg, unsigned int cnt);
+#define _link_dlg_unsafe(d_entry, dlg) \
+	do { \
+		if (!d_entry->first) { \
+			d_entry->first = d_entry->last = dlg; \
+		} else { \
+			d_entry->last->next = dlg; \
+			dlg->prev = d_entry->last; \
+			d_entry->last = dlg; \
+		} \
+		DBG_REF(dlg, 1); \
+		dlg->ref++; \
+		d_entry->cnt++; \
+	} while (0)
 
-void ref_dlg(struct dlg_cell *dlg, unsigned int cnt);
+#define link_dlg_unsafe(d_entry, dlg) \
+	do { \
+		dlg->h_id = d_entry->next_id++; \
+		_link_dlg_unsafe(d_entry, dlg); \
+	} while (0)
+
+void _unref_dlg(struct dlg_cell *dlg, unsigned int cnt);
+#define unref_dlg(dlg, cnt) \
+	do { \
+		DBG_UNREF(dlg, cnt); \
+		_unref_dlg(dlg, cnt); \
+	} while (0)
+
+void _ref_dlg(struct dlg_cell *dlg, unsigned int cnt);
+#define ref_dlg(dlg, cnt) \
+	do { \
+		DBG_REF(dlg, cnt); \
+		_ref_dlg(dlg, cnt); \
+	} while (0)
 
 void next_state_dlg(struct dlg_cell *dlg, int event, int dir, int *old_state,
 		int *new_state, int *unref, int last_dst_leg, char replicate_events);
 
-struct mi_root * mi_print_dlgs(struct mi_root *cmd, void *param );
-struct mi_root * mi_print_dlgs_ctx(struct mi_root *cmd, void *param );
-struct mi_root * mi_push_dlg_var(struct mi_root *cmd_tree, void *param );
+mi_response_t *mi_print_dlgs(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_print_dlgs_1(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_print_dlgs_2(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_print_dlgs_cnt(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_print_dlgs_ctx(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_print_dlgs_1_ctx(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_print_dlgs_2_ctx(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_print_dlgs_cnt_ctx(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+
+mi_response_t *mi_push_dlg_var(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
 static inline void unref_dlg_destroy_safe(struct dlg_cell *dlg, unsigned int cnt)
 {
@@ -515,7 +585,44 @@ static inline int match_dialog(struct dlg_cell *dlg, str *callid,
 */
 }
 
-int mi_print_dlg(struct mi_node *rpl, struct dlg_cell *dlg, int with_context);
+/* @return: 0 if found, -1 otherwise */
+static inline int get_dlg_unsafe(struct dlg_entry *d_entry,
+          str *callid, str *from_tag, str *to_tag, struct dlg_cell **out_dlg)
+{
+	struct dlg_cell *it;
+	int callee_leg_idx;
+
+	for (it = d_entry->first; it; it = it->next) {
+		if (it->callid.len == callid->len &&
+			it->legs[DLG_CALLER_LEG].tag.len == from_tag->len &&
+			!memcmp(it->callid.s, callid->s, callid->len) &&
+			!memcmp(it->legs[DLG_CALLER_LEG].tag.s, from_tag->s, from_tag->len)) {
+			/* callid & ftag match */
+			callee_leg_idx = callee_idx(it);
+			if (it->legs[callee_leg_idx].tag.len == to_tag->len &&
+				!memcmp(it->legs[callee_leg_idx].tag.s, to_tag->s, to_tag->len)) {
+				/* full dlg match */
+				*out_dlg = it;
+				return 0;
+			}
+		}
+	}
+
+	*out_dlg = NULL;
+	return -1;
+}
+
+static inline void update_dlg_stats(struct dlg_cell *dlg, int amount)
+{
+	if (dlg->state == DLG_STATE_CONFIRMED_NA ||
+	        dlg->state==DLG_STATE_CONFIRMED) {
+		if_update_stat(dlg_enable_stats, active_dlgs, amount);
+	} else if (dlg->state == DLG_STATE_EARLY) {
+		if_update_stat(dlg_enable_stats, early_dlgs, amount);
+	}
+}
+
+int mi_print_dlg(mi_item_t *dialog_obj, struct dlg_cell *dlg, int with_context);
 
 static inline void init_dlg_term_reason(struct dlg_cell *dlg,char *reason,int reason_len)
 {

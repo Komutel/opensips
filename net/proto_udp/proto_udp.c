@@ -54,8 +54,8 @@ static int udp_port = SIP_PORT;
 
 
 static cmd_export_t cmds[] = {
-	{"proto_init", (cmd_function)proto_udp_init, 0, 0, 0, 0},
-	{0,0,0,0,0,0}
+	{"proto_init", (cmd_function)proto_udp_init, {{0,0,0}}, 0},
+	{0,0,{{0,0,0}},0}
 };
 
 
@@ -70,7 +70,9 @@ struct module_exports proto_udp_exports = {
 	MOD_TYPE_DEFAULT,/* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
+	0,               /* load function */
 	NULL,            /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,       /* exported functions */
 	0,          /* exported async functions */
 	params,     /* module parameters */
@@ -83,6 +85,7 @@ struct module_exports proto_udp_exports = {
 	0,          /* response function */
 	0,          /* destroy function */
 	0,          /* per-child init function */
+	0           /* reload confirm function */
 };
 
 

@@ -145,21 +145,24 @@ static int trim_to_single_contact(struct sip_msg *msg, str *aor)
 {
 	static str escape_buf;
 	contact_t *c = NULL;
-	struct socket_info *adv_sock;
+	struct socket_info *send_sock;
 	struct lump *anchor = NULL;
 	char *buf;
 	int e, is_dereg = 1, len, len1;
 	struct hdr_field *ct;
 	union sockaddr_union _;
-	str extra_ct_params, esc_aor;
+	str extra_ct_params, esc_aor, *adv_host, *adv_port;
 
 	/* get the source socket on the way to the next hop */
-	adv_sock = uri2sock(msg, GET_NEXT_HOP(msg), &_, PROTO_NONE);
-	if (!adv_sock) {
+	send_sock = uri2sock(msg, GET_NEXT_HOP(msg), &_, PROTO_NONE);
+	if (!send_sock) {
 		LM_ERR("failed to obtain next hop socket, ci=%.*s\n",
 		       msg->callid->body.len, msg->callid->body.s);
 		return -1;
 	}
+
+	adv_host = _get_adv_host(send_sock, msg);
+	adv_port = _get_adv_port(send_sock, msg);
 
 	/* completely remove all Contact hfs, except the last one */
 	for (ct = msg->contact; ct && ct->sibling; ct = ct->sibling) {
@@ -206,8 +209,8 @@ static int trim_to_single_contact(struct sip_msg *msg, str *aor)
 		}
 	}
 
-	/*    <   sip:               @                                 :ddddd */
-	len = 1 + 4 + esc_aor.len + 1 + strlen(adv_sock->address_str.s) + 6 +
+	/*    <   sip:               @                  :ddddd */
+	len = 1 + 4 + esc_aor.len + 1 + adv_host->len + 6 +
 	      extra_ct_params.len + 1 + 9 + 10 + 1;
 	                   /* > ;expires=<integer> \0 */
 
@@ -217,8 +220,8 @@ static int trim_to_single_contact(struct sip_msg *msg, str *aor)
 		return -1;
 	}
 
-	len1 = sprintf(buf, "<sip:%.*s@%s:%s%.*s>", esc_aor.len, esc_aor.s,
-	               adv_sock->address_str.s, adv_sock->port_no_str.s,
+	len1 = sprintf(buf, "<sip:%.*s@%.*s:%.*s%.*s>", esc_aor.len, esc_aor.s,
+	               adv_host->len, adv_host->s, adv_port->len, adv_port->s,
 	               extra_ct_params.len, extra_ct_params.s);
 
 	if (!msg->expires || msg->expires->body.len == 0) {
@@ -268,7 +271,7 @@ static int overwrite_req_contacts(struct sip_msg *req,
 	urecord_t *r;
 	ucontact_t *uc;
 	struct sip_uri puri;
-	struct socket_info *adv_sock;
+	struct socket_info *send_sock;
 	struct lump *anchor;
 	str new_username;
 	char *lump_buf;
@@ -278,34 +281,35 @@ static int overwrite_req_contacts(struct sip_msg *req,
 	struct ct_mapping *ctmap;
 	struct list_head *_;
 	union sockaddr_union __;
-	str extra_ct_params, ctid_str;
+	str extra_ct_params, ctid_str, *adv_host, *adv_port;
 
 	ul_api.lock_udomain(mri->dom, &mri->aor);
 	ul_api.get_urecord(mri->dom, &mri->aor, &r);
 	if (!r && ul_api.insert_urecord(mri->dom, &mri->aor, &r, 0) < 0) {
-		ul_api.unlock_udomain(mri->dom, &mri->aor);
 		rerrno = R_UL_NEW_R;
 		LM_ERR("failed to insert new record structure\n");
-		return -1;
+		goto out_err;
 	}
 
 	r->no_clear_ref++;
-	ul_api.unlock_udomain(mri->dom, &mri->aor);
 
 	if (str2int(&get_cseq(req)->number, (unsigned int*)&cseq) < 0) {
 		rerrno = R_INV_CSEQ;
 		LM_ERR("failed to convert cseq number, ci: %.*s\n",
 		       req->callid->body.len, req->callid->body.s);
-		return -1;
+		goto out_err;
 	}
 
 	/* get the source socket on the way to the next hop */
-	adv_sock = uri2sock(req, GET_NEXT_HOP(req), &__, PROTO_NONE);
-	if (!adv_sock) {
+	send_sock = uri2sock(req, GET_NEXT_HOP(req), &__, PROTO_NONE);
+	if (!send_sock) {
 		LM_ERR("failed to obtain next hop socket, ci=%.*s\n",
 		       req->callid->body.len, req->callid->body.s);
-		return -1;
+		goto out_err;
 	}
+
+	adv_host = _get_adv_host(send_sock, req);
+	adv_port = _get_adv_port(send_sock, req);
 
 	c = get_first_contact(req);
 	list_for_each(_, &mri->ct_mappings) {
@@ -315,7 +319,7 @@ static int overwrite_req_contacts(struct sip_msg *req,
 		   the URI was already changed, and we cannot do it again */
 		if (c->uri.s < req->buf || c->uri.s > req->buf + req->len) {
 			LM_ERR("SCRIPT BUG - second attempt to change URI Contact\n");
-			return -1;
+			goto out_err;
 		}
 
 		ul_api.get_ucontact(r, &c->uri, &req->callid->body, cseq + 1, &uc);
@@ -330,7 +334,7 @@ static int overwrite_req_contacts(struct sip_msg *req,
 			if (parse_uri(c->uri.s, c->uri.len, &puri) < 0) {
 				LM_ERR("failed to parse reply contact uri <%.*s>\n",
 				       c->uri.len, c->uri.s);
-				return -1;
+				goto out_err;
 			}
 
 			new_username = puri.user;
@@ -348,11 +352,11 @@ static int overwrite_req_contacts(struct sip_msg *req,
 		anchor = del_lump(req, (c->name.s ? c->name.s : c->uri.s) - req->buf,
 		                  c->len, HDR_CONTACT_T);
 		if (!anchor)
-			return -1;
+			goto out_err;
 
 		extra_ct_params = get_extra_ct_params(req);
 
-		len = new_username.len + 1 + strlen(adv_sock->address_str.s) +
+		len = new_username.len + 1 + adv_host->len +
 		      6 /*port*/ + extra_ct_params.len + 2 /*IPv6*/ +
 		      15 /* <sip:>;expires= */ + 10 /* len(expires) */ + 1 /*\0*/ +
 			  (ctid_insertion == MR_APPEND_PARAM ?
@@ -361,30 +365,31 @@ static int overwrite_req_contacts(struct sip_msg *req,
 		lump_buf = pkg_malloc(len);
 		if (!lump_buf) {
 			LM_ERR("oom\n");
-			return -1;
+			goto out_err;
 		}
 
 		LM_DBG("building new Contact URI:\nuser: '%.*s'\n"
-		       "adv_sock: '%s'\nport: '%s'\nfull Contact: '%.*s'\n"
+		       "adv_host: '%.*s'\nadv_port: '%.*s'\nfull Contact: '%.*s'\n"
 			   "ctid_str: %.*s, ctid_param: %.*s\n",
-		       new_username.len, new_username.s, adv_sock->address_str.s,
-		       adv_sock->port_no_str.s, c->uri.len, c->uri.s,
+		       new_username.len, new_username.s, adv_host->len, adv_host->s,
+		       adv_port->len, adv_port->s, c->uri.len, c->uri.s,
 			   ctid_str.len, ctid_str.s, ctid_param.len, ctid_param.s);
 
 		if (ctid_insertion == MR_APPEND_PARAM) {
 			LM_DBG("param insertion\n");
 			len1 = snprintf(lump_buf, len,
-					"<sip:%.*s@%s:%s;%.*s=%lu%.*s>;expires=%d",
+					"<sip:%.*s@%.*s:%.*s;%.*s=%llu%.*s>;expires=%d",
 			         new_username.len, new_username.s,
-			         adv_sock->address_str.s, adv_sock->port_no_str.s,
-			         ctid_param.len, ctid_param.s, ctid,
+			         adv_host->len, adv_host->s, adv_port->len, adv_port->s,
+			         ctid_param.len, ctid_param.s, (unsigned long long)ctid,
 			         extra_ct_params.len, extra_ct_params.s, expires);
 		} else {
 			LM_DBG("username insertion\n");
-			len1 = snprintf(lump_buf, len, "<sip:%.*s@%s:%s%.*s>;expires=%d",
-			                new_username.len, new_username.s,
-			                adv_sock->address_str.s, adv_sock->port_no_str.s,
-			                extra_ct_params.len, extra_ct_params.s, expires);
+			len1 = snprintf(lump_buf, len,
+			                "<sip:%.*s@%.*s:%.*s%.*s>;expires=%d",
+			           new_username.len, new_username.s,
+			           adv_host->len, adv_host->s, adv_port->len, adv_port->s,
+			           extra_ct_params.len, extra_ct_params.s, expires);
 		}
 
 		LM_DBG("final buffer: %.*s\n", len1, lump_buf);
@@ -394,13 +399,18 @@ static int overwrite_req_contacts(struct sip_msg *req,
 
 		if (insert_new_lump_after(anchor, lump_buf, len, HDR_CONTACT_T) == 0) {
 			pkg_free(lump_buf);
-			return -1;
+			goto out_err;
 		}
 
 		c = get_next_contact(c);
 	}
 
+	ul_api.unlock_udomain(mri->dom, &mri->aor);
 	return 0;
+
+out_err:
+	ul_api.unlock_udomain(mri->dom, &mri->aor);
+	return -1;
 }
 
 static int replace_expires_hf(struct sip_msg *msg, int new_expiry)
@@ -939,10 +949,10 @@ static contact_t *match_contact(ucontact_id ctid, struct sip_msg *msg)
 		if (ctid_insertion == MR_APPEND_PARAM) {
 			idx = get_uri_param_idx(&ctid_param, &puri);
 			if (idx < 0) {
-				LM_ERR("failed to locate our ';%.*s=' param, ci = %.*s!\n",
+				LM_DBG("failed to locate our ';%.*s=' param, ci = %.*s!\n",
 				       ctid_param.len, ctid_param.s,
 				       msg->callid->body.len, msg->callid->body.s);
-				return NULL;
+				continue;
 			}
 
 			if (!str_strcmp(&ctid_str, &puri.u_val[idx]))
@@ -1042,6 +1052,7 @@ struct ucontact_info *mid_reg_pack_ci(struct sip_msg *req, struct sip_msg *rpl,
 	ci.flags = mri->ul_flags;
 	ci.cflags = mri->cflags;
 	ci.expires = ctmap->expires + get_act_time();
+	ci.shtag = mri->ownership_tag;
 
 	ci.q = ctmap->q;
 	ci.methods = ctmap->methods;
@@ -1171,6 +1182,10 @@ static inline int save_restore_rpl_contacts(struct sip_msg *req, struct sip_msg*
 
 		calc_ob_contact_expires(rpl, _c->expires, &e_out, 1);
 		e_out -= get_act_time();
+
+		/* the main registrar might enforce shorter lifetimes */
+		if (e_out < ctmap->expires)
+			ctmap->expires = e_out;
 
 		LM_DBG("    >> REGISTER %ds ------- %ds 200 OK <<!\n", ctmap->expires,
 		       e_out);
@@ -1336,7 +1351,7 @@ static inline int save_restore_req_contacts(struct sip_msg *req, struct sip_msg*
 	}
 
 	/* replicated AoRs will have an empty k/v store */
-	if (!ul_api.get_urecord_key(r, &ul_key_callid)) {
+	if (!ul_api.get_urecord_key(r, &ul_key_callid) && _c) {
 		if (store_urecord_data(r, mri, &_c->uri, e_out, get_act_time(),
 		                       cseq) != 0) {
 			LM_ERR("failed to attach urecord data - oom?\n");
@@ -1586,7 +1601,6 @@ static int prepare_forward(struct sip_msg *msg, udomain_t *ud,
 {
 	struct mid_reg_info *mri;
 	struct to_body *to, *from;
-	str *aor = &sctx->aor;
 
 	LM_DBG("from: '%.*s'\n", msg->from->body.len, msg->from->body.s);
 	LM_DBG("Call-ID: '%.*s'\n", msg->callid->body.len, msg->callid->body.s);
@@ -1604,11 +1618,15 @@ static int prepare_forward(struct sip_msg *msg, udomain_t *ud,
 	mri->reg_flags = sctx->flags;
 	mri->star = sctx->star;
 
-	if (aor) {
-		if (shm_str_dup(&mri->aor, aor) != 0) {
-			LM_ERR("oom\n");
-			goto out_free;
-		}
+	if (shm_str_dup(&mri->aor, &sctx->aor) != 0) {
+		LM_ERR("oom\n");
+		goto out_free;
+	}
+
+	if (sctx->ownership_tag.s
+		&& shm_str_dup(&mri->ownership_tag, &sctx->ownership_tag) != 0) {
+		LM_ERR("oom\n");
+		goto out_free;
 	}
 
 	if (parse_from_header(msg) != 0) {
@@ -1946,7 +1964,7 @@ int extract_aor(str* _uri, str* _a,str *sip_instance,str *call_id)
  * return: fwd / nfwd / error
  */
 static int process_contacts_by_ct(struct sip_msg *msg, urecord_t *urec,
-                                  unsigned int flags)
+                                  unsigned int flags, str *ownership_tag)
 {
 	int e, expires_out, ret, cflags;
 	unsigned int last_reg_ts;
@@ -1959,7 +1977,8 @@ static int process_contacts_by_ct(struct sip_msg *msg, urecord_t *urec,
 	cflags = (flags&REG_SAVE_MEMORY_FLAG)?FL_MEM:FL_NONE;
 
 	/* pack the contact_info */
-	if ( (ci=pack_ci(msg, 0, 0, 0, ul_api.nat_flag, cflags))==0 ) {
+	if ( (ci=pack_ci(msg, 0, 0, 0, ul_api.nat_flag, cflags,
+						ownership_tag))==0 ) {
 		LM_ERR("failed to initial pack contact info\n");
 		return -1;
 	}
@@ -2003,7 +2022,7 @@ static int process_contacts_by_ct(struct sip_msg *msg, urecord_t *urec,
 			} else {
 				/* pack the contact specific info */
 				ci = pack_ci(msg, ct, e + get_act_time(), 0,
-				             ul_api.nat_flag, cflags);
+				             ul_api.nat_flag, cflags, ownership_tag);
 				if (!ci) {
 					LM_ERR("failed to pack contact specific info\n");
 					rerrno = R_UL_UPD_C;
@@ -2088,7 +2107,7 @@ static int calc_max_ct_diff(urecord_t *urec)
  * return: fwd / nfwd / error
  */
 static int process_contacts_by_aor(struct sip_msg *req, urecord_t *urec,
-                                   unsigned int flags)
+                                   unsigned int flags, str *ownership_tag)
 {
 	int e, ret, ctno = 0, cflags, max_diff = -1;
 	ucontact_info_t *ci;
@@ -2120,7 +2139,8 @@ static int process_contacts_by_aor(struct sip_msg *req, urecord_t *urec,
 	cflags = (flags&REG_SAVE_MEMORY_FLAG)?FL_MEM:FL_NONE;
 
 	/* pack the contact_info */
-	if ( (ci=pack_ci(req, 0, 0, 0, ul_api.nat_flag, cflags))==0 ) {
+	if ( (ci=pack_ci(req, 0, 0, 0, ul_api.nat_flag, cflags,
+						ownership_tag))==0 ) {
 		LM_ERR("failed to initial pack contact info\n");
 		return -1;
 	}
@@ -2161,7 +2181,7 @@ static int process_contacts_by_aor(struct sip_msg *req, urecord_t *urec,
 
 			/* pack the contact specific info */
 			ci = pack_ci(req, ct, e + get_act_time(), 0,
-			             ul_api.nat_flag, cflags);
+			             ul_api.nat_flag, cflags, ownership_tag);
 			if (!ci) {
 				LM_ERR("failed to pack contact specific info\n");
 				rerrno = R_UL_UPD_C;
@@ -2184,7 +2204,7 @@ static int process_contacts_by_aor(struct sip_msg *req, urecord_t *urec,
 
 			/* pack the contact specific info */
 			ci = pack_ci(req, ct, e + get_act_time(), 0,
-			             ul_api.nat_flag, cflags);
+			             ul_api.nat_flag, cflags, ownership_tag);
 			if (!ci) {
 				LM_ERR("failed to pack contact specific info\n");
 				rerrno = R_UL_UPD_C;
@@ -2267,12 +2287,10 @@ static void parse_save_flags(str *flags_s, struct save_ctx *out_sctx)
 	}
 }
 
-int mid_reg_save(struct sip_msg *msg, char *dom, char *flags_gp,
-                          char *to_uri_gp, char *expires_gp)
+int mid_reg_save(struct sip_msg *msg, udomain_t *ud, str *flags_str,
+                          str *to_uri, int *expires, str *owtag)
 {
-	udomain_t *ud = (udomain_t *)dom;
 	urecord_t *rec = NULL;
-	str flags_str = { NULL, 0 }, to_uri = { NULL, 0 };
 	struct save_ctx sctx;
 	int rc = -1, st;
 
@@ -2286,37 +2304,27 @@ int mid_reg_save(struct sip_msg *msg, char *dom, char *flags_gp,
 
 	LM_DBG("saving to %.*s...\n", ud->name->len, ud->name->s);
 
-	if (flags_gp) {
-		if (fixup_get_svalue(msg, (gparam_p)flags_gp, &flags_str)) {
-			LM_ERR("invalid flags parameter");
-			return -1;
-		}
-
-		parse_save_flags(&flags_str, &sctx);
-	}
+	if (flags_str)
+		parse_save_flags(flags_str, &sctx);
 
 	if (parse_reg_headers(msg) != 0) {
 		LM_ERR("failed to parse req headers\n");
 		return -1;
 	}
 
-	if (!to_uri_gp) {
-		to_uri = get_to(msg)->uri;
-	} else if (fixup_get_svalue(msg, (gparam_p)to_uri_gp, &to_uri)) {
-		LM_ERR("invalid AoR parameter");
-		return -1;
-	}
+	if (!to_uri)
+		to_uri = &get_to(msg)->uri;
 
-	if (!expires_gp) {
+	if (!expires)
 		sctx.expires_out = outgoing_expires;
-	} else if (fixup_get_ivalue(msg, (gparam_p)expires_gp, &sctx.expires_out)) {
-		LM_ERR("invalid outgoing_expires parameter");
-		return -1;
-	}
+	else
+		sctx.expires_out = *expires;
 
-	if (extract_aor(&to_uri, &sctx.aor, 0, 0) < 0) {
+	if (owtag)
+		sctx.ownership_tag = *owtag;
+
+	if (extract_aor(to_uri, &sctx.aor, 0, 0) < 0) {
 		LM_ERR("failed to extract Address Of Record\n");
-		ul_api.unlock_udomain(ud, &sctx.aor);
 		return -1;
 	}
 
@@ -2345,9 +2353,9 @@ int mid_reg_save(struct sip_msg *msg, char *dom, char *flags_gp,
 	}
 
 	if (reg_mode == MID_REG_THROTTLE_CT)
-		rc = process_contacts_by_ct(msg, rec, sctx.flags);
+		rc = process_contacts_by_ct(msg, rec, sctx.flags, &sctx.ownership_tag);
 	else if (reg_mode == MID_REG_THROTTLE_AOR)
-		rc = process_contacts_by_aor(msg, rec, sctx.flags);
+		rc = process_contacts_by_aor(msg,rec, sctx.flags, &sctx.ownership_tag);
 
 	if (rc == -1)
 		goto out_error;

@@ -552,6 +552,28 @@ error:
 	return -1;
 }
 
+static inline void unescape_crlf(str *in_out)
+{
+	char *p, *lim = in_out->s + in_out->len;
+
+	if (ZSTR(*in_out))
+		return;
+
+	for (p = in_out->s; p < lim; p++) {
+		if (*p == '\\' && p + 1 < lim) {
+			if (*(p + 1) == 'r') {
+				*p = '\r';
+				memmove(p + 1, p + 2, lim - (p + 2));
+				in_out->len--;
+			} else if (*(p + 1) == 'n') {
+				*p = '\n';
+				memmove(p + 1, p + 2, lim - (p + 2));
+				in_out->len--;
+			}
+		}
+	}
+}
+
 
 /*
  * Convert a string to lower case
@@ -726,6 +748,30 @@ static inline int shm_nt_str_dup(str* dst, const str* src)
 	return 0;
 }
 
+/*
+ * Make a copy of an str structure using pkg_malloc
+ *	  + an additional '\0' byte, so you can make use of dst->s
+ */
+static inline int pkg_nt_str_dup(str* dst, const str* src)
+{
+	if (!src->s) {
+		memset(dst, 0, sizeof *dst);
+		return 0;
+	}
+
+	dst->s = pkg_malloc(src->len + 1);
+	if (!dst->s) {
+		LM_ERR("no private memory left\n");
+		dst->len = 0;
+		return -1;
+	}
+
+	memcpy(dst->s, src->s, src->len);
+	dst->len = src->len;
+	dst->s[dst->len] = '\0';
+	return 0;
+}
+
 static inline char *shm_strdup(const char *str)
 {
 	char *rval;
@@ -864,14 +910,15 @@ static inline int str_strcmp(const str *stra, const str *strb)
 	if(stra==NULL || strb==NULL || stra->s ==NULL || strb->s==NULL
 	|| stra->len<0 || strb->len<0)
 	{
-		LM_ERR("bad parameters\n");
+#ifdef EXTRA_DEBUG
+		LM_DBG("bad parameters\n");
+#endif
 		return -2;
 	}
 
 	alen = stra->len;
 	blen = strb->len;
 	minlen = (alen < blen ? alen : blen);
-
 
 	for (i = 0; i < minlen; i++) {
 		const char a = stra->s[i];
@@ -881,6 +928,7 @@ static inline int str_strcmp(const str *stra, const str *strb)
 		if (a > b)
 			return 1;
 	}
+
 	if (alen < blen)
 		return -1;
 	else if (alen > blen)
@@ -899,16 +947,14 @@ static inline char* str_strstr(const str *stra, const str *strb)
 
 	if (stra==NULL || strb==NULL || stra->s==NULL || strb->s==NULL
 			|| stra->len<=0 || strb->len<=0) {
-		LM_ERR("bad parameters\n");
+#ifdef EXTRA_DEBUG
+		LM_DBG("bad parameters\n");
+#endif
 		return NULL;
 	}
 
-	if (strb->len > stra->len) {
-		LM_ERR("string to find should be smaller than the string"
-				"to search into\n");
+	if (strb->len > stra->len)
 		return NULL;
-	}
-
 
 	len=0;
 	while (stra->len-len >= strb->len){
@@ -943,7 +989,9 @@ static inline int str_strncasecmp(const str *stra, const str *strb, int n)
 	if(stra==NULL || strb==NULL || stra->s ==NULL || strb->s==NULL
 	|| stra->len<0 || strb->len<0)
 	{
-		LM_ERR("bad parameters\n");
+#ifdef EXTRA_DEBUG
+		LM_DBG("bad parameters\n");
+#endif
 		return -2;
 	}
 
@@ -978,7 +1026,9 @@ static inline int str_strcasecmp(const str *stra, const str *strb)
 	if(stra==NULL || strb==NULL || stra->s ==NULL || strb->s==NULL
 	|| stra->len<0 || strb->len<0)
 	{
-		LM_ERR("bad parameters\n");
+#ifdef EXTRA_DEBUG
+		LM_DBG("bad parameters\n");
+#endif
 		return -2;
 	}
 	alen = stra->len;
@@ -1003,16 +1053,34 @@ static inline int str_strcasecmp(const str *stra, const str *strb)
 
 #define start_expire_timer(begin,threshold) \
 	do { \
-		if ((threshold))	\
+		if (threshold)	\
 			gettimeofday(&(begin), NULL); \
 	} while(0) \
 
-#define stop_expire_timer(begin,threshold,func_info,extra_s,extra_len,tcp) \
+#define __stop_expire_timer(begin,threshold,func_info, \
+                           extra_s,extra_len,tcp,_slow_stat) \
 	do { \
-		if ((threshold)) \
-			log_expiry(get_time_diff(&(begin)),(threshold),(func_info),(extra_s),(extra_len),tcp); \
+		int __usdiff__ = get_time_diff(&(begin)); \
+		if ((threshold) && __usdiff__ > (threshold)) { \
+			log_expiry(__usdiff__,(threshold),(func_info), \
+			           (extra_s),(extra_len),tcp); \
+			if (_slow_stat) \
+				inc_stat(_slow_stat); \
+		} \
 	} while(0)
 
+#define stop_expire_timer(begin,threshold,func_info,extra_s,extra_len,tcp) \
+	__stop_expire_timer(begin,threshold,func_info, \
+	                   extra_s,extra_len,tcp,(stat_var *)NULL)
+
+#define _stop_expire_timer(begin,threshold,func_info,extra_s,extra_len,tcp, \
+							slow, total) \
+	do { \
+		__stop_expire_timer(begin,threshold,func_info, \
+							extra_s,extra_len,tcp,slow); \
+		if (total) \
+			inc_stat(total); \
+	} while (0)
 
 
 int tcp_timeout_con_get;
@@ -1083,7 +1151,7 @@ static inline void log_expiry(int time_diff,int expire,
 		if (memcmp(func_info,"msg",3) == 0) {
 			for (i=0;i<LONGEST_ACTION_SIZE;i++) {
 				if (longest_action[i].a) {
-					if ((unsigned char)longest_action[i].a->type == MODULE_T)
+					if ((unsigned char)longest_action[i].a->type == CMD_T)
 					LM_WARN("#%i is a module action : %s - %dus - line %d\n",i+1,
 							((cmd_export_t*)(longest_action[i].a->elem[0].u.data))->name,
 							longest_action[i].a_time,longest_action[i].a->line);

@@ -119,10 +119,14 @@ void read_dialog_profiles(char *b, int l, struct dlg_cell *dlg,
 str* write_dialog_vars(struct dlg_val *vars);
 str* write_dialog_profiles(struct dlg_profile_link *links);
 
-struct mi_root* mi_sync_db_dlg(struct mi_root *cmd, void *param);
-struct mi_root* mi_restore_dlg_db(struct mi_root *cmd, void *param);
+mi_response_t *mi_sync_db_dlg(const mi_params_t *params,
+								struct mi_handler *async_hdl);
+mi_response_t *mi_restore_dlg_db(const mi_params_t *params,
+								struct mi_handler *async_hdl);
 
 void dlg_setup_reinvite_callbacks(struct cell *t, struct sip_msg *req,
 		struct dlg_cell *dlg);
+int persist_reinvite_pinging(struct dlg_cell *dlg);
+int restore_reinvite_pinging(struct dlg_cell *dlg);
 
 #endif

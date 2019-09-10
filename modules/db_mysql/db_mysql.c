@@ -36,7 +36,7 @@
 #include "dbase.h"
 #include "db_mysql.h"
 
-#include <mysql/mysql.h>
+#include <mysql.h>
 
 
 unsigned int db_mysql_timeout_interval = 2;   /* Default is 6 seconds */
@@ -53,8 +53,8 @@ int db_mysql_bind_api(const str* mod, db_func_t *dbb);
  * MySQL database module interface
  */
 static cmd_export_t cmds[] = {
-	{"db_bind_api",         (cmd_function)db_mysql_bind_api,      0, 0, 0, 0},
-	{0, 0, 0, 0, 0, 0}
+	{"db_bind_api",         (cmd_function)db_mysql_bind_api,      {{0, 0, 0}}, 0},
+	{0, 0, {{0, 0, 0}}, 0}
 };
 
 struct tls_mgm_binds tls_api;
@@ -96,7 +96,9 @@ struct module_exports exports = {
 	MOD_TYPE_SQLDB,  /* class of this module */
 	MODULE_VERSION,
 	DEFAULT_DLFLAGS, /* dlopen flags */
-	&deps,            /* OpenSIPS module dependencies */
+	0,               /* load function */
+	&deps,           /* OpenSIPS module dependencies */
+	0,               /* OpenSIPS dependencies function */
 	cmds,
 	0,               /* exported async functions */
 	params,          /* module parameters */
@@ -108,7 +110,8 @@ struct module_exports exports = {
 	mysql_mod_init,  /* module initialization function */
 	0,               /* response function*/
 	0,               /* destroy function */
-	0                /* per-child init function */
+	0,               /* per-child init function */
+	0                /* reload confirm function */
 };
 
 
