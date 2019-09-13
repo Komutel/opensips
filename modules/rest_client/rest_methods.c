@@ -406,6 +406,7 @@ static inline int set_upload_opts(CURL *handle, str *ctype, str *body)
 {
 	CURLcode rc;
 
+  header_list = curl_slist_append(header_list, "Expect:");
 	if (ctype) {
 		snprintf(print_buff, MAX_CONTENT_TYPE_LEN, "Content-Type: %.*s",
 		         ctype->len, ctype->s);
