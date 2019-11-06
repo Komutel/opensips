@@ -3657,7 +3657,7 @@ int b2b_init_request(struct sip_msg* msg, struct b2b_scen_fl *scf,
 	return ret;
 }
 
-int b2bl_bridge(str* key, str* new_dst, str* new_from_dname, int entity_no)
+int b2bl_bridge(str* key, str* new_dst, str* new_to, str* new_from_dname, int entity_no)
 {
 	b2bl_tuple_t* tuple;
 	b2bl_entity_id_t* entity = NULL, *old_entity;
@@ -3668,7 +3668,7 @@ int b2bl_bridge(str* key, str* new_dst, str* new_from_dname, int entity_no)
 	b2b_req_data_t req_data;
 	b2b_rpl_data_t rpl_data;
 
-	if(!key || !new_dst)
+	if(!key || !new_dst || !new_to)
 	{
 		LM_ERR("Wrong arguments\n");
 		return -1;
@@ -3684,6 +3684,13 @@ int b2bl_bridge(str* key, str* new_dst, str* new_from_dname, int entity_no)
 	{
 		LM_ERR("Bad argument. Not a valid uri [%.*s]\n",
 			new_dst->len, new_dst->s);
+		return -1;
+	}
+
+	if(parse_uri(new_to->s, new_to->len, &uri)< 0)
+	{
+		LM_ERR("Bad argument. Not a valid uri [%.*s]\n",
+			new_to->len, new_to->s);
 		return -1;
 	}
 
@@ -3731,21 +3738,22 @@ int b2bl_bridge(str* key, str* new_dst, str* new_from_dname, int entity_no)
 			b2b_api.send_reply(&rpl_data);
 			b2bl_delete_entity(old_entity, tuple);
 		}
-		else
+    else
 			b2b_end_dialog(old_entity, tuple);
 	}
 	else
 		LM_DBG("No peer found\n");
 
-	if(tuple->scenario_state == B2B_BRIDGING_STATE &&
+	if((tuple->scenario_state == B2B_BRIDGING_STATE || tuple->scenario_state == 1) &&
 			tuple->bridge_entities[0]== tuple->servers[0] &&
-			tuple->servers[0]->state== B2BL_ENT_CONFIRMED)
+			(tuple->servers[0]->state== B2BL_ENT_CONFIRMED || tuple->servers[0]->state== B2BL_ENT_NEW))
 	{
 		LM_DBG("Do the second step of the bridging\n");
 		/* do the second step of bridging */
 		memset(&ci, 0, sizeof(client_info_t));
 		ci.method        = method_invite;
-		ci.to_uri        = *new_dst;
+		ci.to_uri        = *new_to;
+		ci.req_uri       = *new_dst;
 		ci.from_uri      = tuple->servers[0]->to_uri;
 		ci.from_dname    = *new_from_dname;
 		ci.extra_headers = tuple->extra_headers;
