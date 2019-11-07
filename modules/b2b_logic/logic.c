@@ -3929,7 +3929,7 @@ int b2bl_set_state(str* key, int state)
 	return 0;
 }
 
-int b2bl_bridge_2calls(str* key1, str* key2)
+int b2bl_bridge_2calls(str* key1, str* key2, int entity_no)
 {
 	b2bl_tuple_t* tuple;
 	unsigned int hash_index, local_index;
@@ -3937,12 +3937,22 @@ int b2bl_bridge_2calls(str* key1, str* key2)
 	b2bl_entity_id_t *e;
 	b2b_req_data_t req_data;
 	b2b_rpl_data_t rpl_data;
+  unsigned int other_entity;
+
+  LM_INFO("Bridging 2 calls [%.*s] [%.*s]\n", key1->len, key1->s, key2->len, key2->s);
 
 	if(!key1 || !key2)
 	{
 		LM_ERR("Wrong arguments [%p] [%p]\n", key1, key2);
 		return -1;
 	}
+
+	if(entity_no < 0 || entity_no > 1)
+	{
+		LM_ERR("Wrong entity arguments [%d]\n", entity_no);
+		return -1;
+	}
+  other_entity = entity_no == 0 ? 1 : 0;
 
 	if(b2bl_parse_key(key2, &hash_index, &local_index) < 0)
 	{
@@ -3960,16 +3970,10 @@ int b2bl_bridge_2calls(str* key1, str* key2)
 		goto error;
 	}
 
-	if(tuple->bridge_entities[0] && !tuple->bridge_entities[0]->disconnected)
+	if(tuple->bridge_entities[entity_no] && !tuple->bridge_entities[entity_no]->disconnected)
 	{
-		e2 = tuple->bridge_entities[0];
-		e = tuple->bridge_entities[1];
-	}
-	else
-	if(tuple->bridge_entities[1] && !tuple->bridge_entities[1]->disconnected)
-	{
-		e2 = tuple->bridge_entities[1];
-		e = tuple->bridge_entities[0];
+		e2 = tuple->bridge_entities[entity_no];
+		e = tuple->bridge_entities[other_entity];
 	}
 	tuple->cbf = 0;
 	if(e2 == NULL)
