@@ -94,6 +94,8 @@ str custom_headers_lst[HDR_LST_LEN];
 int custom_headers_lst_len =0;
 str custom_headers_regexp = {0, 0};
 regex_t* custom_headers_re;
+static char* script_notification_route = NULL;
+int notification_routeid = -1;
 /* The list of the headers that are passed on the other side by default */
 static str default_headers[HDR_DEFAULT_LEN]=
 {
@@ -168,6 +170,7 @@ static param_export_t params[]=
 	{"db_url",          STR_PARAM,                &db_url.s                  },
 	{"db_table",        STR_PARAM,                &b2bl_dbtable.s            },
 	{"max_duration",    INT_PARAM,                &max_duration              },
+	{"script_notification_route",STR_PARAM,       &script_notification_route        },
 	/*
 	{"b2bl_key_avp",    STR_PARAM,                &b2bl_key_avp_param.s      },
 	*/
@@ -372,6 +375,17 @@ static int mod_init(void)
 	/* parse extra headers */
 	if(custom_headers.s)
 		custom_headers.len = strlen(custom_headers.s);
+
+	if (script_notification_route)
+	{
+		notification_routeid = get_script_route_ID_by_name( script_notification_route,
+			sroutes->request, RT_NO);
+		if (notification_routeid < 1)
+		{
+			LM_ERR("route <%s> does not exist\n",script_notification_route);
+			return -1;
+		}
+	}
 
 	memset(custom_headers_lst, 0, HDR_LST_LEN*sizeof(str));
 	custom_headers_lst[i].s = custom_headers.s;

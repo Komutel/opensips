@@ -64,6 +64,7 @@ static str cancel_reason_hdr=
 extern b2b_scenario_t* script_scenarios;
 extern int b2bl_key_avp_name;
 extern unsigned short b2bl_key_avp_type;
+extern int notification_routeid;
 
 struct to_body* get_b2bl_from(struct sip_msg* msg);
 
@@ -2071,6 +2072,9 @@ int b2b_logic_notify(int src, struct sip_msg* msg, str* key, int type, void* par
 		LM_ERR("failed to parse message\n");
 		return -1;
 	}
+
+	run_top_route(sroutes->request[notification_routeid].a, msg);
+	//b2b_api.apply_lumps(msg);
 
 	/* extract body if it has one */
 	/* process the body */
