@@ -1073,6 +1073,39 @@ int do_action(struct action* a, struct sip_msg* msg)
 			else
 				ret = 1;
 			break;
+		case SET_BODY_T:
+			script_trace("core", "set_body", msg, a->file, a->line);
+			if (a->elem[0].type!=SCRIPTVAR_ST){
+				LM_ALERT("wrong type in setbody(): %d\n", a->elem[0].type);
+				ret=E_BUG;
+				break;
+			}
+
+			if (parse_headers(msg,HDR_EOH_F, 0)==-1 || !msg->unparsed){
+				LM_ALERT("message not parsed\n");
+				ret=E_BUG;
+				break;
+			}
+
+			if (a->elem[0].type == SCRIPTVAR_ST) {
+				spec = (pv_spec_t*)a->elem[0].u.data;
+				if( pv_get_spec_value(msg, spec, &val)!=0
+				|| (val.flags&PV_VAL_NULL) || !(val.flags&PV_VAL_STR) ) {
+					LM_ALERT("variable not valid\n");
+					ret=-1;
+					break;
+				}
+			}
+
+			int cur_body_len = strlen(msg->unparsed);
+			memcpy(&msg->unparsed[CRLF_LEN], val.rs.s, val.rs.len);
+			memcpy(&msg->unparsed[CRLF_LEN + val.rs.len], CRLF, CRLF_LEN);
+			msg->len = msg->len - cur_body_len + CRLF_LEN + val.rs.len + CRLF_LEN;
+			msg->buf[msg->len] = '\0';
+			msg->content_length->parsed = (void*)(long)(strlen(msg->unparsed) - CRLF_LEN);
+
+			ret = 1;
+			break;
 		case SET_DSTHOST_T:
 		case SET_DSTPORT_T:
 			script_trace("core", (unsigned char) a->type == SET_DSTHOST_T ?

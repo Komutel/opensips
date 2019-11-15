@@ -269,6 +269,7 @@ extern int cfg_parse_only_routes;
 %token SET_URI
 %token REVERT_URI
 %token SET_DSTURI
+%token SET_BODY
 %token RESET_DSTURI
 %token ISDSTURISET
 %token FORCE_RPORT
@@ -2412,6 +2413,8 @@ cmd:	 FORWARD LPAREN STRING RPAREN	{ mk_action2( $$, FORWARD_T,
 		| SET_DSTURI error { $$=0; yyerror("missing '(' or ')' ?"); }
 		| SET_DSTURI LPAREN error RPAREN { $$=0; yyerror("bad argument, "
 										"string expected"); }
+		| SET_BODY LPAREN script_var RPAREN { mk_action2( $$, SET_BODY_T,
+													SCRIPTVAR_ST, 0, $3, 0); }
 		| RESET_DSTURI LPAREN RPAREN { mk_action2( $$, RESET_DSTURI_T,
 															0,0,0,0); }
 		| RESET_DSTURI { mk_action2( $$, RESET_DSTURI_T, 0,0,0,0); }
