@@ -63,7 +63,7 @@ typedef str* (*b2bl_bridge_extern_f)(str* scenario_name, str* args[5],
 int b2bl_terminate_call(str* key);
 typedef int (*b2bl_terminate_call_t)(str* key);
 
-int b2bl_bridge(str* key,str* new_uri,str* new_to,str* new_from_dname,int entity_no);
+int b2bl_bridge(str* key,str* new_uri,str* new_to,str* dst_uri,str* new_from_dname,int entity_no);
 int b2bl_set_state(str* key, int state);
 
 int b2bl_bridge_2calls(str* key1, str* key2, int entity_no);

@@ -3661,7 +3661,7 @@ int b2b_init_request(struct sip_msg* msg, struct b2b_scen_fl *scf,
 	return ret;
 }
 
-int b2bl_bridge(str* key, str* new_dst, str* new_to, str* new_from_dname, int entity_no)
+int b2bl_bridge(str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from_dname, int entity_no)
 {
 	b2bl_tuple_t* tuple;
 	b2bl_entity_id_t* entity = NULL, *old_entity;
@@ -3672,7 +3672,7 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* new_from_dname, int en
 	b2b_req_data_t req_data;
 	b2b_rpl_data_t rpl_data;
 
-	if(!key || !new_dst || !new_to)
+	if(!key || !new_dst || !new_to || !dst_uri)
 	{
 		LM_ERR("Wrong arguments\n");
 		return -1;
@@ -3695,6 +3695,13 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* new_from_dname, int en
 	{
 		LM_ERR("Bad argument. Not a valid uri [%.*s]\n",
 			new_to->len, new_to->s);
+		return -1;
+	}
+
+	if(parse_uri(dst_uri->s, dst_uri->len, &uri)< 0)
+	{
+		LM_ERR("Bad argument. Not a valid uri [%.*s]\n",
+			dst_uri->len, dst_uri->s);
 		return -1;
 	}
 
@@ -3756,6 +3763,7 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* new_from_dname, int en
 		/* do the second step of bridging */
 		memset(&ci, 0, sizeof(client_info_t));
 		ci.method        = method_invite;
+		ci.dst_uri       = *dst_uri;
 		ci.to_uri        = *new_to;
 		ci.req_uri       = *new_dst;
 		ci.from_uri      = tuple->servers[0]->to_uri;
