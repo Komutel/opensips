@@ -3671,6 +3671,7 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from
 	client_info_t ci;
 	b2b_req_data_t req_data;
 	b2b_rpl_data_t rpl_data;
+	int ret;
 
 	if(!key || !new_dst || !new_to || !dst_uri)
 	{
@@ -3705,9 +3706,15 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from
 		return -1;
 	}
 
-	if(b2bl_parse_key(key, &hash_index, &local_index) < 0)
+	ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
+	if(ret < 0)
 	{
-		LM_ERR("Failed to parse key\n");
+		if (ret == -1)
+			LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key->len, key->s);
+		else
+			LM_ERR("Could not find entity [%.*s]\n",
+					key->len, key->s);
 		return -1;
 	}
 
@@ -3755,7 +3762,7 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from
 	else
 		LM_DBG("No peer found\n");
 
-	if((tuple->scenario_state == B2B_BRIDGING_STATE || tuple->scenario_state == 1) &&
+	if((tuple->scenario_state == B2B_BRIDGING_STATE || tuple->scenario_state == B2B_NOTDEF_STATE) &&
 			tuple->bridge_entities[0]== tuple->servers[0] &&
 			(tuple->servers[0]->state== B2BL_ENT_CONFIRMED || tuple->servers[0]->state== B2BL_ENT_NEW))
 	{
