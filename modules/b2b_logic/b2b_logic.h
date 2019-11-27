@@ -123,6 +123,7 @@ extern int use_init_sdp;
 extern str server_address;
 extern unsigned int max_duration;
 extern str init_callid_hdr;
+extern str init_to_hdr;
 extern str db_url;
 extern db_con_t *b2bl_db ;
 extern db_func_t b2bl_dbf;

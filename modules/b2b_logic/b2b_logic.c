@@ -129,6 +129,7 @@ db_con_t *b2bl_db = NULL;
 db_func_t b2bl_dbf;
 str b2bl_dbtable= str_init("b2b_logic");
 str init_callid_hdr={0, 0};
+str init_to_hdr={0, 0};
 
 str server_address = {0, 0};
 int b2bl_db_mode = WRITE_BACK;
@@ -177,6 +178,7 @@ static param_export_t params[]=
 	{"b2bl_from_spec_param",STR_PARAM,            &b2bl_from_spec_param.s    },
 	{"server_address",  STR_PARAM,                &server_address.s          },
 	{"init_callid_hdr", STR_PARAM,                &init_callid_hdr.s         },
+	{"init_to_hdr",     STR_PARAM,                &init_to_hdr.s             },
 	{"db_mode",         INT_PARAM,                &b2bl_db_mode              },
 	{"b2bl_th_init_timeout",INT_PARAM,            &b2bl_th_init_timeout      },
 	{0,                    0,                          0                     }
@@ -483,6 +485,8 @@ next_hdr:
 
 	if(init_callid_hdr.s)
 		init_callid_hdr.len = strlen(init_callid_hdr.s);
+	if(init_to_hdr.s)
+		init_to_hdr.len = strlen(init_to_hdr.s);
 
 	register_timer("b2bl-clean", b2bl_clean, 0, b2b_clean_period,
 		TIMER_FLAG_DELAY_ON_DELAY);
