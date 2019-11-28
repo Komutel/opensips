@@ -1044,7 +1044,7 @@ b2b_dlg_t* b2b_new_dlg(struct sip_msg* msg, str* local_contact,
 	/* reject CANCEL messages */
 	if (msg->first_line.type == SIP_REQUEST)
 	{
-		if(msg->first_line.u.request.method_value != METHOD_INVITE)
+		if(msg->first_line.u.request.method_value != METHOD_INVITE && msg->first_line.u.request.method_value != METHOD_REFER)
 		{
 			LM_ERR("Called b2b_init on a Cancel message\n");
 			return 0;
@@ -1330,7 +1330,7 @@ int b2b_send_reply(b2b_rpl_data_t* rpl_data)
 
 	if(code >= 200)
 	{
-		if(method_value==METHOD_INVITE)
+		if(method_value==METHOD_INVITE || method_value==METHOD_REFER)
 		{
 			if(code < 300)
 				dlg->state = B2B_CONFIRMED;
@@ -2521,7 +2521,7 @@ dummy_reply:
 		{
 			goto error;
 		}
-		if(method_id != METHOD_INVITE)
+		if(method_id != METHOD_INVITE && method_id != METHOD_REFER)
 		{
 			goto done;
 		}
