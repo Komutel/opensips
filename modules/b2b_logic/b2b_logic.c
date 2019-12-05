@@ -76,7 +76,7 @@ static void b2bl_db_timer_update(unsigned int ticks, void* param);
 int  b2b_init_request(struct sip_msg* msg, str* arg1, str* arg2, str* arg3,
 		str* arg4, str* arg5, str* arg6);
 int  b2b_bridge_request(struct sip_msg* msg, str *key, int *entity_no);
-int b2b_bridge_2calls_request(struct sip_msg* msg, str* key1, str* key2, int *entity_no);
+int b2b_bridge_2calls_request(struct sip_msg* msg, str* key1, str* key2, int *entity_no1, int *entity_no2);
 int b2b_bridge_outgoing_request(struct sip_msg* msg, str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from_dname, int entity_no);
 
 void b2b_mark_todel( b2bl_tuple_t* tuple);
@@ -148,7 +148,7 @@ static cmd_export_t cmds[]=
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
   {"b2b_bridge_2calls_request", (cmd_function)b2b_bridge_2calls_request,
-		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
+		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
   {"b2b_bridge_outgoing_request", (cmd_function)b2b_bridge_outgoing_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
@@ -1199,14 +1199,14 @@ int  b2b_bridge_external(str* key, str* new_dst, str* new_from_dname, int entity
 	return b2bl_bridge(key, new_dst, new_dst, new_dst, new_from_dname, entity_no);
 }
 
-int b2b_bridge_2calls_request(struct sip_msg* msg, str* key1, str* key2, int *entity_no)
+int b2b_bridge_2calls_request(struct sip_msg* msg, str* key1, str* key2, int *entity_no1, int *entity_no2)
 {
-  return b2bl_bridge_2calls(key1, key2, *entity_no);
+  return b2bl_bridge_2calls(key1, key2, *entity_no1, *entity_no2);
 }
 
 int b2b_bridge_2calls_external(str* key1, str* key2)
 {
-  return b2bl_bridge_2calls(key1, key2, 0);
+  return b2bl_bridge_2calls(key1, key2, 0, 1);
 }
 
 static mi_response_t *mi_b2b_terminate_call(const mi_params_t *params,
