@@ -3957,6 +3957,7 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no)
 	b2b_req_data_t req_data;
 	b2b_rpl_data_t rpl_data;
   unsigned int other_entity;
+  int ret;
 
   LM_INFO("Bridging 2 calls [%.*s] [%.*s]\n", key1->len, key1->s, key2->len, key2->s);
 
@@ -3973,9 +3974,15 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no)
 	}
   other_entity = entity_no == 0 ? 1 : 0;
 
-	if(b2bl_parse_key(key2, &hash_index, &local_index) < 0)
+	ret = b2bl_get_tuple_key(key2, &hash_index, &local_index);
+	if(ret < 0)
 	{
-		LM_ERR("Failed to parse key [%.*s]\n", key2->len, key2->s);
+		if (ret == -1)
+			LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key2->len, key2->s);
+		else
+			LM_ERR("Could not find entity [%.*s]\n",
+					key2->len, key2->s);
 		return -1;
 	}
 
@@ -4068,9 +4075,15 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no)
 	lock_release(&b2bl_htable[hash_index].lock);
 	/* must restore the b2bl_key for this entity in b2b_entities */
 
-	if(b2bl_parse_key(key1, &hash_index, &local_index) < 0)
+	ret = b2bl_get_tuple_key(key1, &hash_index, &local_index);
+	if(ret < 0)
 	{
-		LM_ERR("Failed to parse key [%.*s]\n", key1->len, key1->s);
+		if (ret == -1)
+			LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key1->len, key1->s);
+		else
+			LM_ERR("Could not find entity [%.*s]\n",
+					key1->len, key1->s);
 		return -1;
 	}
 
