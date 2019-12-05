@@ -3948,7 +3948,7 @@ int b2bl_set_state(str* key, int state)
 	return 0;
 }
 
-int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2)
+int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2, int drop_call1, int drop_call2)
 {
 	b2bl_tuple_t* tuple;
 	unsigned int hash_index, local_index;
@@ -4016,18 +4016,21 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2)
 
 	if(e)
 	{
-		if(e->disconnected && e->state==B2BL_ENT_CONFIRMED)
+		if(drop_call2!=0)
 		{
-			memset(&rpl_data, 0, sizeof(b2b_rpl_data_t));
-			PREP_RPL_DATA(e);
-			rpl_data.method =METHOD_BYE;
-			rpl_data.code =200;
-			rpl_data.text =&ok;
-			b2b_api.send_reply(&rpl_data);
-		}
-		else
-		{
-			b2b_end_dialog(e, tuple);
+			if(e->disconnected && e->state==B2BL_ENT_CONFIRMED)
+			{
+				memset(&rpl_data, 0, sizeof(b2b_rpl_data_t));
+				PREP_RPL_DATA(e);
+				rpl_data.method =METHOD_BYE;
+				rpl_data.code =200;
+				rpl_data.text =&ok;
+				b2b_api.send_reply(&rpl_data);
+			}
+			else
+			{
+				b2b_end_dialog(e, tuple);
+			}
 		}
 		e->peer = NULL;
 	}
@@ -4108,16 +4111,19 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2)
 	e = tuple->bridge_entities[other_entity];
 	if(e)
 	{
-		if(e->disconnected && e->state==B2BL_ENT_CONFIRMED)
+		if(drop_call1!=0)
 		{
-			memset(&rpl_data, 0, sizeof(b2b_rpl_data_t));
-			PREP_RPL_DATA(e);
-			rpl_data.method =METHOD_BYE;
-			rpl_data.code =200;
-			rpl_data.text =&ok;
-			b2b_api.send_reply(&rpl_data);
+			if(e->disconnected && e->state==B2BL_ENT_CONFIRMED)
+			{
+				memset(&rpl_data, 0, sizeof(b2b_rpl_data_t));
+				PREP_RPL_DATA(e);
+				rpl_data.method =METHOD_BYE;
+				rpl_data.code =200;
+				rpl_data.text =&ok;
+				b2b_api.send_reply(&rpl_data);
+			}
+			b2b_end_dialog(e, tuple);
 		}
-		b2b_end_dialog(e, tuple);
 		e->peer = NULL;
 	}
 
