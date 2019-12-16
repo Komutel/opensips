@@ -219,7 +219,7 @@ modparam("siprec", "skip_failover_codes", "[34][0-9][0-9]")
 
    The first SDP offer done by the SIPREC plugin will be done in IPV6.  
    This will force the SRS to do an SDP offer in IPV6.  The media sent 
-   to the SRS will be IPV6 even if the signaling is in IPV4.
+   to the SRS will be in IPV6 even if the signaling is in IPV4.
 
    Default value is “0”.
 
