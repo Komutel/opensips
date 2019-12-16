@@ -20,6 +20,7 @@ SIPREC Module
               1.7.1. media_port_min (integer)
               1.7.2. media_port_max (integer)
               1.7.3. skip_failover_codes (string)
+              1.7.4. sdp_offer_ipv6 (integer)
 
         1.8. Exported Functions
 
@@ -53,6 +54,7 @@ SIPREC Module
 
    1.6. Use siprec_start_recording() function with custom XML
           values for participants
+   1.7. Set sdp_offer_ipv6 parameter
 
 Chapter 1. Admin Guide
 
@@ -211,6 +213,18 @@ modparam("siprec", "skip_failover_codes", "408|487")
 
 # do not failover on any 3xx or 4xx reply code
 modparam("siprec", "skip_failover_codes", "[34][0-9][0-9]")
+...
+
+1.7.4. sdp_offer_ipv6 (integer)
+
+   The first SDP offer done by the SIPREC plugin will be done in IPV6.  
+   This will force the recorder to do an SDP.  The media sent to the recorder will be IPV6.
+
+   Default value is “0”.
+
+   Example 1.7. Set sdp_offer_ipv6 parameter
+...
+modparam("siprec", "sdp_offer_ipv6", 1)
 ...
 
 1.8. Exported Functions
