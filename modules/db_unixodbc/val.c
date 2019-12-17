@@ -32,7 +32,7 @@
 #include "../../db/db_ut.h"
 #include "db_unixodbc.h"
 #include "val.h"
-#include "con.h"
+#include "connection.h"
 
 
 #include <string.h>
