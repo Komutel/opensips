@@ -78,6 +78,7 @@ int  b2b_init_request(struct sip_msg* msg, str* arg1, str* arg2, str* arg3,
 int  b2b_bridge_request(struct sip_msg* msg, str *key, int *entity_no);
 int b2b_bridge_2calls_request(struct sip_msg* msg, str* key1, str* key2, int *entity_no1, int *entity_no2, int *drop_call1, int *drop_call2);
 int b2b_bridge_outgoing_request(struct sip_msg* msg, str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from_dname, int entity_no);
+int b2b_ReInvite_request(struct sip_msg* msg, str* key, int* entity_no);
 
 void b2b_mark_todel( b2bl_tuple_t* tuple);
 
@@ -147,11 +148,14 @@ static cmd_export_t cmds[]=
 	{"b2b_bridge_request", (cmd_function)b2b_bridge_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
-  {"b2b_bridge_2calls_request", (cmd_function)b2b_bridge_2calls_request,
+	{"b2b_bridge_2calls_request", (cmd_function)b2b_bridge_2calls_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
-  {"b2b_bridge_outgoing_request", (cmd_function)b2b_bridge_outgoing_request,
+	{"b2b_bridge_outgoing_request", (cmd_function)b2b_bridge_outgoing_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{"b2b_ReInvite_request", (cmd_function)b2b_ReInvite_request,
+		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
 	{"b2b_logic_bind", (cmd_function)b2b_logic_bind, {{0,0,0}}, 0},
 	{0,0,{{0,0,0}},0}
@@ -1192,6 +1196,11 @@ int  b2b_bridge_request(struct sip_msg* msg, str *key, int *entity_no)
 int  b2b_bridge_outgoing_request(struct sip_msg* msg, str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from_dname, int entity_no)
 {
 	return b2bl_bridge(key, new_dst, new_to, dst_uri, new_from_dname, entity_no);
+}
+
+int b2b_ReInvite_request(struct sip_msg* msg, str* key, int* entity_no)
+{
+	return b2b_ReInvite_msg(msg, key, *entity_no);
 }
 
 int  b2b_bridge_external(str* key, str* new_dst, str* new_from_dname, int entity_no)

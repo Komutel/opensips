@@ -4160,7 +4160,7 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2, int
 		goto error;
 	}
 	e1->sdp_type = B2BL_SDP_LATE;
-	e1->state = 0;
+	e1->state = B2BL_ENT_NEW;
 	tuple->scenario_state = B2B_BRIDGING_STATE;
 	if(max_duration)
 		tuple->lifetime = get_ticks() + max_duration;
@@ -4214,6 +4214,66 @@ end:
 	return b2bl_parse_key(key, hash_index, local_index);
 }
 
+int b2b_ReInvite_msg(struct sip_msg* msg, str* key, int entity_no)
+{
+	b2b_req_data_t req_data;
+	unsigned int hash_index, local_index;
+	b2bl_tuple_t* tuple;
+	b2bl_entity_id_t* bentity;
+	int ret;
+
+	LM_INFO("Sent reInvite without a body to entity\n");
+
+	if(!msg || !key || entity_no != 0)
+	{
+		LM_ERR("Wrong arguments [%p] [%p] [%d]\n", msg, key, entity_no);
+		return -1;
+	}
+
+	ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
+	if(ret < 0)
+	{
+		if (ret == -1)
+			LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key->len, key->s);
+		else
+			LM_ERR("Could not find entity [%.*s]\n",
+					key->len, key->s);
+		return -1;
+	}
+
+	lock_get(&b2bl_htable[hash_index].lock);
+
+	tuple = b2bl_search_tuple_safe(hash_index, local_index);
+	if(tuple == NULL)
+	{
+		LM_ERR("No entity found\n");
+		lock_release(&b2bl_htable[hash_index].lock);
+		return -1;
+	}
+
+	bentity = tuple->bridge_entities[entity_no];
+
+	memset(&req_data, 0, sizeof(b2b_req_data_t));
+	req_data.et =bentity->type;
+	req_data.b2b_key =&bentity->key;
+	req_data.method =&method_invite;
+	req_data.client_headers=&bentity->hdrs;
+	req_data.extra_headers = NULL;
+	req_data.dlginfo =bentity->dlginfo;
+	if(b2b_api.send_request(&req_data) < 0)
+	{
+		LM_ERR("Failed to send reInvite\n");
+		lock_release(&b2bl_htable[hash_index].lock);
+		return -1;
+	}
+	bentity->sdp_type = B2BL_SDP_LATE;
+	tuple->scenario_state = B2B_BRIDGING_STATE;
+
+	lock_release(&b2bl_htable[hash_index].lock);
+
+	return 0;
+}
 
 /* Bridge an initial Invite with an existing dialog */
 /* key and entity_no identity the existing call and the which entity from the call

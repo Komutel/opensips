@@ -70,6 +70,7 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2, int
 typedef int (*b2bl_bridge_2calls_t)(str* key1, str* key2);
 
 int b2bl_bridge_msg(struct sip_msg* msg, str* key, int entity_no);
+int b2b_ReInvite_msg(struct sip_msg* msg, str* key, int entity_no);
 int b2bl_get_tuple_key(str *key, unsigned int *hash_index,
 		unsigned int *local_index);
 typedef int (*b2bl_bridge_msg_t)(struct sip_msg* msg, str* key, int entity_no);
