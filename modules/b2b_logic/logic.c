@@ -2747,7 +2747,7 @@ str* create_top_hiding_entities(struct sip_msg* msg, b2bl_cback_f cbf,
 
 	hash_index = core_hash(&to_uri, &from_uri, b2bl_hsize);
 	b2bl_htable[hash_index].flags = params->flags;
-	tuple = b2bl_insert_new(msg, hash_index, NULL, NULL, NULL,
+	tuple = b2bl_insert_new(msg, hash_index, NULL, NULL, body.s?&body:NULL,
 				custom_hdrs, -1, &b2bl_key, INSERTDB_FLAG);
 	if(tuple== NULL)
 	{
@@ -3777,7 +3777,7 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from
 		ci.from_dname    = *new_from_dname;
 		ci.extra_headers = tuple->extra_headers;
 		ci.client_headers= &tuple->servers[0]->hdrs;
-		ci.body          = tuple->b1_sdp.s?&tuple->b1_sdp:0;
+		ci.body          = tuple->b1_sdp.s?&tuple->b1_sdp:(tuple->sdp.s?&tuple->sdp:0);
 		ci.cseq          = 1;
 		ci.local_contact = tuple->local_contact;
 
