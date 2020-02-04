@@ -1205,7 +1205,7 @@ int b2b_logic_notify_reply(int src, struct sip_msg* msg, str* key, str* body, st
 			}
 
 			/* if a reply with 200 OK -> we have two possibilities- either the first 200OK or the final */
-			if(process_bridge_200OK(msg, tuple->extra_headers,
+			if(process_bridge_200OK(msg, extra_headers,
 						(body->s?body:0), tuple, entity)< 0)
 			{
 				LM_ERR("Failed to process bridging 200OK for Invite\n");
