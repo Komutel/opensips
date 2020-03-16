@@ -521,12 +521,12 @@ int handle_subscribe(struct sip_msg* msg, int* force_active_param, str* tag)
 			LM_ERR("bad Event header\n");
 			goto error;
 		}
-		if(((event_t*)msg->event->parsed)->parsed == EVENT_OTHER)
-		{
-			LM_ERR("unrecognized value [%.*s] in Event header\n",
-				msg->event->body.len, msg->event->body.s);
-			goto bad_event;
-		}
+		//if(((event_t*)msg->event->parsed)->parsed == EVENT_OTHER)
+		//{
+		//	LM_ERR("unrecognized value [%.*s] in Event header\n",
+		//		msg->event->body.len, msg->event->body.s);
+		//	goto bad_event;
+		//}
 	} else {
 		LM_ERR("Missing Event header\n");
 		goto bad_event;
