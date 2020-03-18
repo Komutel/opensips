@@ -439,12 +439,12 @@ int handle_publish(struct sip_msg* msg, str* sender_uri)
 			LM_ERR("cannot parse Event header\n");
 			goto error;
 		}
-		if(((event_t*)msg->event->parsed)->parsed == EVENT_OTHER)
-		{
-			LM_ERR("unrecognized value [%.*s] in Event header\n",
-				msg->event->body.len, msg->event->body.s);
-			goto unsupported_event;
-		}
+		//if(((event_t*)msg->event->parsed)->parsed == EVENT_OTHER)
+		//{
+		//	LM_ERR("unrecognized value [%.*s] in Event header\n",
+		//		msg->event->body.len, msg->event->body.s);
+		//	goto unsupported_event;
+		//}
 	} else {
 		LM_ERR("Missing Event header\n");
 		goto unsupported_event;
