@@ -66,6 +66,11 @@
 #define LINE_SEIZE_STR "line-seize"
 #define LINE_SEIZE_STR_LEN 10
 
+#define LINE_HEADERS_STR "komutel-ng-headers"
+#define LINE_HEADERS_STR_LEN 18
+
+#define LINE_BODY_STR "komutel-ng-body"
+#define LINE_BODY_STR_LEN 15
 
 static inline char* skip_token(char* _b, int _l)
 {
@@ -132,6 +137,12 @@ int event_parser(char* _s, int _l, event_t* _e)
 	} else if ((_e->text.len == LINE_SEIZE_STR_LEN) &&
 		   !strncasecmp(LINE_SEIZE_STR, tmp.s, _e->text.len)) {
 		_e->parsed = EVENT_LINE_SEIZE;
+	} else if ((_e->text.len == LINE_HEADERS_STR_LEN) &&
+		   !strncasecmp(LINE_HEADERS_STR, tmp.s, _e->text.len)) {
+		_e->parsed = EVENT_HEADERS;
+	} else if ((_e->text.len == LINE_BODY_STR_LEN) &&
+		   !strncasecmp(LINE_BODY_STR, tmp.s, _e->text.len)) {
+		_e->parsed = EVENT_BODY;
 	} else {
 		_e->parsed = EVENT_OTHER;
 	}
