@@ -2100,7 +2100,7 @@ jump_over_body:
 		aux_body = subs->event->aux_body_processing(subs, notify_body);
 
 	/* don't open new TCP connections if connection is down */
-	tcp_no_new_conn = 1;
+	//tcp_no_new_conn = 1;
 
 	result = tmb.t_request_within
 		(&met,                          /* method*/
