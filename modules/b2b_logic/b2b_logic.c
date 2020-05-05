@@ -78,6 +78,8 @@ int  b2b_init_request(struct sip_msg* msg, str* arg1, str* arg2, str* arg3,
 int  b2b_bridge_request(struct sip_msg* msg, str *key, int *entity_no);
 int b2b_bridge_2calls_request(struct sip_msg* msg, str* key1, str* key2, int *entity_no1, int *entity_no2, int *drop_call1, int *drop_call2);
 int b2b_bridge_outgoing_request(struct sip_msg* msg, str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from_dname, int entity_no);
+int b2b_bind_entity_request(struct sip_msg* msg, str* key, int *entity_no);
+int b2b_route_to_request(struct sip_msg* msg, str* key, int *entity_no);
 int b2b_ReInvite_request(struct sip_msg* msg, str* key, int* entity_no);
 
 void b2b_mark_todel( b2bl_tuple_t* tuple);
@@ -151,6 +153,12 @@ static cmd_export_t cmds[]=
 		REQUEST_ROUTE},
 	{"b2b_bridge_2calls_request", (cmd_function)b2b_bridge_2calls_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{"b2b_bind_entity_request", (cmd_function)b2b_bind_entity_request,
+		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{"b2b_route_to_request", (cmd_function)b2b_route_to_request,
+		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
 	{"b2b_bridge_outgoing_request", (cmd_function)b2b_bridge_outgoing_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
@@ -1220,6 +1228,16 @@ int b2b_bridge_2calls_request(struct sip_msg* msg, str* key1, str* key2, int *en
 int b2b_bridge_2calls_external(str* key1, str* key2)
 {
   return b2bl_bridge_2calls(key1, key2, 0, 1, 1, 1);
+}
+
+int b2b_bind_entity_request(struct sip_msg* msg, str* key, int *entity_no)
+{
+  return b2bl_bind_entity(msg, key, *entity_no);
+}
+
+int b2b_route_to_request(struct sip_msg* msg, str* key, int *entity_no)
+{
+  return b2b_route_to(msg, key, *entity_no);
 }
 
 static mi_response_t *mi_b2b_terminate_call(const mi_params_t *params,

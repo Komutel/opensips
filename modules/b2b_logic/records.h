@@ -45,11 +45,13 @@ typedef struct b2bl_entity_id
 	b2b_dlginfo_t* dlginfo;
 	int disconnected;
 	int state;
+	int actual_peer;
 	unsigned short no;
 	unsigned short sdp_type;
 	enum b2b_entity_type type;
 	b2bl_dlg_stat_t stats;
 	struct b2bl_entity_id* peer;
+	struct b2bl_entity_id* other_peer;
 	struct b2bl_entity_id* prev;
 	struct b2bl_entity_id* next;
 }b2bl_entity_id_t;

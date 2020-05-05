@@ -66,6 +66,9 @@ typedef int (*b2bl_terminate_call_t)(str* key);
 int b2bl_bridge(str* key,str* new_uri,str* new_to,str* dst_uri,str* new_from_dname,int entity_no);
 int b2bl_set_state(str* key, int state);
 
+int b2bl_bind_entity(struct sip_msg* msg, str* key, int entity_no);
+int b2b_route_to(struct sip_msg* msg, str* key, int entity_no);
+
 int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2, int drop_call1, int drop_call2);
 typedef int (*b2bl_bridge_2calls_t)(str* key1, str* key2);
 

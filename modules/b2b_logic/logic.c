@@ -1117,7 +1117,14 @@ int b2b_logic_notify_reply(int src, struct sip_msg* msg, str* key, str* body, st
 		LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 		goto error;
 	}
-	peer = entity->peer;
+
+	if(entity->actual_peer > 0 && entity->other_peer)
+	{
+		peer = entity->other_peer;
+		entity->actual_peer = 0;
+	}
+	else
+		peer = entity->peer;
 
 	LM_DBG("b2b_entity key = %.*s\n", key->len, key->s);
 
@@ -3946,6 +3953,179 @@ int b2bl_set_state(str* key, int state)
 	lock_release(&b2bl_htable[hash_index].lock);
 
 	return 0;
+}
+
+int b2b_route_to(struct sip_msg* msg, str* key, int entity_no)
+{
+	int ret;
+	unsigned int hash_index, local_index;
+	b2bl_tuple_t* tuple;
+
+	LM_INFO("Routing call [%.*s] to entity [%d] \n", key->len, key->s, entity_no);
+
+	if(!key)
+	{
+		LM_ERR("Wrong arguments [%p]\n", key);
+		return -1;
+	}
+
+	if(entity_no < 0 || entity_no > (MAX_B2BL_ENT - 1))
+	{
+		LM_ERR("Wrong entity arguments [%d]\n", entity_no);
+		return -1;
+	}
+
+	ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
+	if(ret < 0)
+	{
+		if (ret == -1)
+			LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key->len, key->s);
+		else
+			LM_ERR("Could not find entity [%.*s]\n",
+					key->len, key->s);
+		return -1;
+	}
+
+	/* extract the entity */
+	lock_get(&b2bl_htable[hash_index].lock);
+
+	tuple = b2bl_search_tuple_safe(hash_index, local_index);
+	if(tuple == NULL)
+	{
+		LM_ERR("No entity found\n");
+		goto error;
+	}
+
+	if(tuple->bridge_entities[0])
+		tuple->bridge_entities[0]->actual_peer = entity_no;
+
+	lock_release(&b2bl_htable[hash_index].lock);
+
+	return 0;
+
+error:
+	lock_release(&b2bl_htable[hash_index].lock);
+	return -1;	
+}
+
+int b2bl_bind_entity(struct sip_msg* msg, str* key, int entity_no)
+{
+	b2bl_tuple_t* tuple;
+	unsigned int hash_index, local_index;
+	str* server_id;
+	str body = str_init("");
+	str headers = str_init("");
+	b2bl_entity_id_t* entity = NULL;
+	str from_uri;
+	str to_uri;
+	str from_dname;
+	int ret;
+
+	LM_INFO("Binding call entity [%.*s]\n", key->len, key->s);
+
+	if(!key)
+	{
+		LM_ERR("Wrong arguments [%p]\n", key);
+		return -1;
+	}
+
+	if(entity_no < 0 || entity_no > (MAX_B2BL_ENT - 1))
+	{
+		LM_ERR("Wrong entity arguments [%d]\n", entity_no);
+		return -1;
+	}
+
+	ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
+	if(ret < 0)
+	{
+		if (ret == -1)
+			LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key->len, key->s);
+		else
+			LM_ERR("Could not find entity [%.*s]\n",
+					key->len, key->s);
+		return -1;
+	}
+
+	/* extract the entity */
+	lock_get(&b2bl_htable[hash_index].lock);
+
+	tuple = b2bl_search_tuple_safe(hash_index, local_index);
+	if(tuple == NULL)
+	{
+		LM_ERR("No entity found\n");
+		goto error;
+	}
+
+	if(msg->content_length)
+	{
+		if ( get_body(msg, &body)!=0 )
+		{
+			LM_ERR("cannot extract body\n");
+			goto error;
+		}
+	}
+
+	/* build extra headers */
+	if(b2b_extra_headers(msg, NULL, NULL, &headers)< 0)
+	{
+		LM_ERR("Failed to construct extra headers\n");
+		goto error;
+	}
+
+	/* create server entity from Invite */
+	if (b2b_msg_get_from(msg, &from_uri, &from_dname)< 0 ||
+	b2b_msg_get_to(msg, &to_uri, b2bl_htable[hash_index].flags)< 0)
+	{
+		LM_ERR("Failed to get to or from from the message\n");
+		goto error;
+	}
+	server_id = b2b_api.server_new(msg, &tuple->local_contact, b2b_server_notify, tuple->key);
+	if(server_id == NULL)
+	{
+		LM_ERR("failed to create new b2b server instance\n");
+		pkg_free(to_uri.s);
+		goto error;
+	}
+
+	entity = b2bl_create_new_entity(B2B_SERVER, server_id, &to_uri, &from_uri, 0,0,0, msg);
+	if(entity == NULL)
+	{
+		LM_ERR("Failed to create server entity\n");
+		pkg_free(to_uri.s);
+		goto error;
+	}
+	pkg_free(to_uri.s);
+
+	if (0 != b2bl_add_server(tuple, entity))
+		goto error;
+
+	entity->peer = tuple->bridge_entities[0];
+	tuple->bridge_entities[0]->other_peer = entity;
+
+	entity->stats.start_time = get_ticks();
+	entity->stats.call_time = 0;
+
+	entity->no = 1;
+	tuple->bridge_entities[entity_no] = entity;
+
+	lock_release(&b2bl_htable[hash_index].lock);
+
+	ret = b2b_logic_notify_request(B2B_SERVER, msg, server_id, &body, &headers, tuple->key, hash_index, local_index);
+	if(ret < 0)
+	{
+		LM_ERR("Could not notify request [%.*s]\n",	server_id->len, server_id->s);
+		return -1;
+	}
+
+	return 0;
+
+error:
+	if(tuple)
+		b2b_mark_todel(tuple);
+	lock_release(&b2bl_htable[hash_index].lock);
+	return -1;	
 }
 
 int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2, int drop_call1, int drop_call2)
