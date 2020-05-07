@@ -4212,6 +4212,8 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2, int
 				b2b_end_dialog(e, tuple);
 			}
 		}
+		else
+			b2bl_delete_entity(e, tuple);
 		e->peer = NULL;
 	}
 
@@ -4302,8 +4304,13 @@ int b2bl_bridge_2calls(str* key1, str* key2, int entity_no1, int entity_no2, int
 				rpl_data.text =&ok;
 				b2b_api.send_reply(&rpl_data);
 			}
+			else
+			{
 			b2b_end_dialog(e, tuple);
+			}
 		}
+		else
+			b2bl_delete_entity(e, tuple);
 		e->peer = NULL;
 	}
 
