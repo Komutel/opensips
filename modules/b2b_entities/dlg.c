@@ -827,6 +827,12 @@ logic_notify:
 			}
 		}
 		lock_get(&table[hash_index].lock);
+		if(b2b_search_htable(table, hash_index, local_index) == NULL)
+		{
+			LM_INFO("Dialog does not exists anymore\n");
+			lock_release(&table[hash_index].lock);
+			return SCB_RUN_ALL;
+		}
 	}
 
 	if(method_value != METHOD_CANCEL)
