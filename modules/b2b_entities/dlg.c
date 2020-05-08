@@ -831,7 +831,7 @@ logic_notify:
 		{
 			LM_INFO("Dialog does not exists anymore\n");
 			lock_release(&table[hash_index].lock);
-			return SCB_RUN_ALL;
+			return SCB_DROP_MSG;
 		}
 	}
 
