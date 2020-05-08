@@ -131,6 +131,7 @@ extern db_func_t b2bl_dbf;
 extern str b2bl_dbtable;
 extern char* b2bl_db_buf;
 extern int b2bl_db_mode;
+extern int b2bl_skip_refer_to_convert;
 extern unsigned int b2bl_th_init_timeout;
 
 static inline int b2b_get_request_id(str* request)

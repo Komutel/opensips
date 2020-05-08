@@ -137,6 +137,7 @@ str init_contact_hdr={0, 0};
 
 str server_address = {0, 0};
 int b2bl_db_mode = WRITE_BACK;
+int b2bl_skip_refer_to_convert = 0;
 int unsigned b2bl_th_init_timeout = 60;
 
 static cmd_export_t cmds[]=
@@ -194,6 +195,7 @@ static param_export_t params[]=
 	{"init_to_hdr",     STR_PARAM,                &init_to_hdr.s             },
 	{"init_contact_hdr",STR_PARAM,                &init_contact_hdr.s        },
 	{"db_mode",         INT_PARAM,                &b2bl_db_mode              },
+	{"skip_refer_to_convert", INT_PARAM,          &b2bl_skip_refer_to_convert},
 	{"b2bl_th_init_timeout",INT_PARAM,            &b2bl_th_init_timeout      },
 	{0,                    0,                          0                     }
 };
