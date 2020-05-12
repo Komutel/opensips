@@ -759,6 +759,7 @@ int b2b_extra_headers(struct sip_msg* msg, str* b2bl_key, str* custom_hdrs,
 	struct hdr_field* subscription_state_hdr;
 	struct hdr_field* hdr;
 	struct hdr_field* hdrs[HDR_LST_LEN + HDR_DEFAULT_LEN];
+	struct hdr_field *hdrtemp;
 	regmatch_t pmatch;
 	int hdrs_no = 0;
 	int len = 0;
@@ -798,11 +799,16 @@ int b2b_extra_headers(struct sip_msg* msg, str* b2bl_key, str* custom_hdrs,
 	/* add also the custom headers */
 	for(i = 0; i< custom_headers_lst_len; i++)
 	{
-		hdr = get_header_by_name( msg, custom_headers_lst[i].s,
-				custom_headers_lst[i].len);
-		if(hdr)
+		for( hdrtemp=msg->headers ; hdrtemp ; hdrtemp=hdrtemp->next )
 		{
-			hdrs[hdrs_no++] = hdr;
+			if(custom_headers_lst[i].len==hdrtemp->name.len 
+			&& strncasecmp(hdrtemp->name.s,custom_headers_lst[i].s,custom_headers_lst[i].len)==0)
+			{
+				if(hdrtemp)
+		{
+					hdrs[hdrs_no++] = hdrtemp;
+				}
+			}
 		}
 	}
 

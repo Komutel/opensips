@@ -45,7 +45,7 @@
 #include "b2b_entities.h"
 #include "b2be_db.h"
 
-#define BUF_LEN              1024
+#define BUF_LEN              4048
 
 str ack = str_init(ACK);
 str bye = str_init(BYE);
