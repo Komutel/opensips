@@ -72,6 +72,9 @@
 #define LINE_BODY_STR "komutel-ng-body"
 #define LINE_BODY_STR_LEN 15
 
+#define LINE_CONFERENCE_STR "komutel-ng-conference"
+#define LINE_CONFERENCE_STR_LEN 21
+
 static inline char* skip_token(char* _b, int _l)
 {
 	int i = 0;
@@ -143,6 +146,9 @@ int event_parser(char* _s, int _l, event_t* _e)
 	} else if ((_e->text.len == LINE_BODY_STR_LEN) &&
 		   !strncasecmp(LINE_BODY_STR, tmp.s, _e->text.len)) {
 		_e->parsed = EVENT_BODY;
+	} else if ((_e->text.len == LINE_CONFERENCE_STR_LEN) &&
+		   !strncasecmp(LINE_CONFERENCE_STR, tmp.s, _e->text.len)) {
+		_e->parsed = EVENT_CONFERENCE;
 	} else {
 		_e->parsed = EVENT_OTHER;
 	}
