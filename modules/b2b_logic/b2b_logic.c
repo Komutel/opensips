@@ -81,6 +81,7 @@ int b2b_bridge_outgoing_request(struct sip_msg* msg, str* key, str* new_dst, str
 int b2b_bind_entity_request(struct sip_msg* msg, str* key, int *entity_no);
 int b2b_route_to_request(struct sip_msg* msg, str* key, int *entity_no, int *new_entity);
 int b2b_ReInvite_request(struct sip_msg* msg, str* key, int* entity_no);
+int b2b_send_request_request(struct sip_msg* msg, str* key, str* method, int *entity_no);
 
 void b2b_mark_todel( b2bl_tuple_t* tuple);
 
@@ -161,6 +162,9 @@ static cmd_export_t cmds[]=
 	{"b2b_route_to_request", (cmd_function)b2b_route_to_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
+	{"b2b_send_request_request", (cmd_function)b2b_send_request_request,
+		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
+		REQUEST_ROUTE|LOCAL_ROUTE},
 	{"b2b_bridge_outgoing_request", (cmd_function)b2b_bridge_outgoing_request,
 		{{CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_STR,0,0}, {CMD_PARAM_INT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
@@ -1240,6 +1244,11 @@ int b2b_bind_entity_request(struct sip_msg* msg, str* key, int *entity_no)
 int b2b_route_to_request(struct sip_msg* msg, str* key, int *entity_no, int *new_entity)
 {
   return b2b_route_to(msg, key, *entity_no, *new_entity);
+}
+
+int b2b_send_request_request(struct sip_msg* msg, str* key, str* method, int *entity_no)
+{
+  return b2bl_send_request(msg, key, method, *entity_no);
 }
 
 static mi_response_t *mi_b2b_terminate_call(const mi_params_t *params,

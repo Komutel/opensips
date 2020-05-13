@@ -4027,6 +4027,69 @@ error:
 	return -1;	
 }
 
+
+int b2bl_send_request(struct sip_msg* msg, str* key, str* method, int entity_no)
+{
+	b2bl_tuple_t* tuple;
+	unsigned int hash_index, local_index;
+	b2b_req_data_t req_data;
+	int ret;
+
+	LM_INFO("Send request to entity [%.*s] [%.*s]\n", key->len, key->s, method->len, method->s);
+
+	if(!key)
+	{
+		LM_ERR("Wrong arguments [%p]\n", key);
+		return -1;
+	}
+
+	if(entity_no < 0 || entity_no > (MAX_B2BL_ENT - 1))
+	{
+		LM_ERR("Wrong entity arguments [%d]\n", entity_no);
+		return -1;
+	}
+
+	ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
+	if(ret < 0)
+	{
+		if (ret == -1)
+			LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key->len, key->s);
+		else
+			LM_ERR("Could not find entity [%.*s]\n",
+					key->len, key->s);
+		return -1;
+	}
+
+	/* extract the entity */
+	lock_get(&b2bl_htable[hash_index].lock);
+
+	tuple = b2bl_search_tuple_safe(hash_index, local_index);
+	if(tuple == NULL)
+	{
+		LM_ERR("No entity found\n");
+		goto error;
+	}
+
+	memset(&req_data, 0, sizeof(b2b_req_data_t));
+	PREP_REQ_DATA(tuple->bridge_entities[entity_no]);
+	req_data.method = method;
+	req_data.client_headers =&tuple->bridge_entities[entity_no]->hdrs;
+	if(b2b_api.send_request(&req_data) < 0)
+	{
+		LM_ERR("Failed to send %.*s request\n", method->len, method->s);
+		goto error;
+	}
+
+	lock_release(&b2bl_htable[hash_index].lock);
+
+	return 0;
+
+error:
+	lock_release(&b2bl_htable[hash_index].lock);
+	return -1;
+}
+
 int b2bl_bind_entity(struct sip_msg* msg, str* key, int entity_no)
 {
 	b2bl_tuple_t* tuple;
