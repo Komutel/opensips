@@ -1118,7 +1118,13 @@ int b2b_logic_notify_reply(int src, struct sip_msg* msg, str* key, str* body, st
 		goto error;
 	}
 
-	if(entity->actual_peer > 0 && entity->other_peer)
+
+	if(entity->actual_peer < 0)
+	{
+		entity->actual_peer = 0;
+		goto done;
+	}
+	else if(entity->actual_peer > 0 && entity->other_peer)
 	{
 		peer = entity->other_peer;
 		entity->actual_peer = 0;
@@ -1465,7 +1471,19 @@ int b2b_logic_notify_request(int src, struct sip_msg* msg, str* key, str* body, 
 		LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 		goto error;
 	}
-	peer = entity->peer;
+
+	if(entity->actual_peer < 0)
+	{
+		entity->actual_peer = 0;
+		goto done;
+	}
+	else if(entity->actual_peer > 0 && entity->other_peer)
+	{
+		peer = entity->other_peer;
+		entity->actual_peer = 0;
+	}
+	else
+		peer = entity->peer;
 
 	LM_DBG("b2b_entity key = %.*s\n", key->len, key->s);
 
@@ -3955,7 +3973,7 @@ int b2bl_set_state(str* key, int state)
 	return 0;
 }
 
-int b2b_route_to(struct sip_msg* msg, str* key, int entity_no)
+int b2b_route_to(struct sip_msg* msg, str* key, int entity_no, int new_entity)
 {
 	int ret;
 	unsigned int hash_index, local_index;
@@ -3997,8 +4015,8 @@ int b2b_route_to(struct sip_msg* msg, str* key, int entity_no)
 		goto error;
 	}
 
-	if(tuple->bridge_entities[0])
-		tuple->bridge_entities[0]->actual_peer = entity_no;
+	if(tuple->bridge_entities[entity_no])
+		tuple->bridge_entities[entity_no]->actual_peer = new_entity;
 
 	lock_release(&b2bl_htable[hash_index].lock);
 
