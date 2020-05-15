@@ -3798,7 +3798,7 @@ int b2bl_bridge(str* key, str* new_dst, str* new_to, str* dst_uri, str* new_from
 		ci.dst_uri       = *dst_uri;
 		ci.to_uri        = *new_to;
 		ci.req_uri       = *new_dst;
-		ci.from_uri      = tuple->servers[0]->to_uri;
+		ci.from_uri      = tuple->servers[0]->from_uri;
 		ci.from_dname    = *new_from_dname;
 		ci.extra_headers = tuple->extra_headers;
 		ci.client_headers= &tuple->servers[0]->hdrs;
