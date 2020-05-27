@@ -87,6 +87,11 @@ static inline int get_local_contact(struct socket_info *sock, str* contact)
 		memcpy( p, sock->adv_name_str.s, sock->adv_name_str.len);
 		p += sock->adv_name_str.len;
 	}
+	else if (default_global_address.s)
+	{
+		memcpy(p, default_global_address.s, default_global_address.len);
+		p += default_global_address.len;
+	}
 	else {
 		memcpy( p, sock->address_str.s, sock->address_str.len);
 		p += sock->address_str.len;
