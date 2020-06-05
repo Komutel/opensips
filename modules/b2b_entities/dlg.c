@@ -1054,7 +1054,7 @@ b2b_dlg_t* b2b_new_dlg(struct sip_msg* msg, str* local_contact,
 	/* reject CANCEL messages */
 	if (msg->first_line.type == SIP_REQUEST)
 	{
-		if(msg->first_line.u.request.method_value != METHOD_INVITE && msg->first_line.u.request.method_value != METHOD_REFER)
+		if(msg->first_line.u.request.method_value != METHOD_INVITE && msg->first_line.u.request.method_value != METHOD_REFER && msg->first_line.u.request.method_value != METHOD_SUBSCRIBE)
 		{
 			LM_ERR("Called b2b_init on a Cancel message\n");
 			return 0;
