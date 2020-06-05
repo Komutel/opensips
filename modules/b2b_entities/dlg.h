@@ -116,6 +116,7 @@ typedef struct b2b_dlg
 	struct cell*         uac_tran;
 	struct cell*         uas_tran;
 	struct cell*         update_tran;
+	struct cell*         refer_tran;
 	struct cell*         cancel_tm_tran;
 	dlg_leg_t*           legs;
 	struct socket_info*  send_sock;

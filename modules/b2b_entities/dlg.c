@@ -857,6 +857,10 @@ logic_notify:
 			{
 				dlg->update_tran = tm_tran;
 			}
+			else if (method_value == METHOD_REFER)
+			{
+				dlg->refer_tran = tm_tran;
+			}
 			else
 			{
 				if(method_value == METHOD_INVITE || method_value == METHOD_BYE)
@@ -1285,8 +1289,10 @@ int b2b_send_reply(b2b_rpl_data_t* rpl_data)
 	else
 		local_contact = dlg->contact[CALLEE_LEG];
 
-	if(sip_method == METHOD_UPDATE)
+	if (sip_method == METHOD_UPDATE)
 		tm_tran = dlg->update_tran;
+	else if (sip_method == METHOD_REFER && dlg->refer_tran)
+		tm_tran = dlg->refer_tran;
 	else
 	{
 		tm_tran = dlg->uas_tran;
@@ -1347,6 +1353,8 @@ int b2b_send_reply(b2b_rpl_data_t* rpl_data)
 		LM_DBG("Reset transaction- send final reply [%p], uas_tran=0\n", dlg);
 		if(sip_method == METHOD_UPDATE)
 			dlg->update_tran = NULL;
+		else if(sip_method == METHOD_REFER)
+			dlg->refer_tran = NULL;
 		else
 			dlg->uas_tran = NULL;
 	}
