@@ -3979,7 +3979,7 @@ int b2b_route_to(struct sip_msg* msg, str* key, int entity_no, int new_entity)
 	unsigned int hash_index, local_index;
 	b2bl_tuple_t* tuple;
 
-	LM_INFO("Routing call [%.*s] to entity [%d] \n", key->len, key->s, entity_no);
+	LM_INFO("Routing call [%.*s] entity [%d] to entity [%d] \n", key->len, key->s, entity_no, new_entity);
 
 	if(!key)
 	{
