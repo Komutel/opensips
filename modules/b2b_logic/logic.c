@@ -4179,6 +4179,12 @@ int b2bl_bind_entity(struct sip_msg* msg, str* key, int entity_no)
 	}
 	pkg_free(to_uri.s);
 
+	if (tuple->servers[1] != NULL)
+	{
+		LM_INFO("Deleting old entity entity\n");
+		b2b_api.entity_delete(tuple->servers[1]->type, &tuple->servers[1]->key, tuple->servers[1]->dlginfo, 1);
+		tuple->servers[1] = NULL;
+	}
 	if (0 != b2bl_add_server(tuple, entity))
 		goto error;
 
