@@ -1475,6 +1475,12 @@ int b2b_logic_notify_request(int src, struct sip_msg* msg, str* key, str* body, 
 	if(entity->actual_peer < 0)
 	{
 		entity->actual_peer = 0;
+		memset(&rpl_data, 0, sizeof(b2b_rpl_data_t));
+		PREP_RPL_DATA(entity);
+		rpl_data.method = msg->first_line.u.request.method_value;
+		rpl_data.code = 200;
+		rpl_data.text = &ok;
+		b2b_api.send_reply(&rpl_data);
 		goto done;
 	}
 	else if(entity->actual_peer > 0 && entity->other_peer)
