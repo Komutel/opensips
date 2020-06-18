@@ -4026,7 +4026,7 @@ int b2b_route_to(struct sip_msg* msg, str* key, int entity_no, int new_entity)
 
 	lock_release(&b2bl_htable[hash_index].lock);
 
-	return 0;
+	return 1;
 
 error:
 	lock_release(&b2bl_htable[hash_index].lock);
