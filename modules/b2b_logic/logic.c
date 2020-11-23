@@ -4215,8 +4215,6 @@ int b2bl_bind_entity(struct sip_msg* msg, str* key, int entity_no)
 	return 0;
 
 error:
-	if(tuple)
-		b2b_mark_todel(tuple);
 	lock_release(&b2bl_htable[hash_index].lock);
 	return -1;	
 }
