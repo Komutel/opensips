@@ -2083,6 +2083,231 @@ done:
 	return rc;
 }
 
+int b2b_send_request(struct sip_msg* msg, str* request, str* ent_str, str* key, pv_spec_t* hnames, pv_spec_t* hvals)
+{
+	b2bl_tuple_t* tuple;
+	b2bl_entity_id_t* entity;
+	b2bl_entity_id_t** entity_head = NULL;
+	unsigned int hash_index, local_index;
+	b2b_req_data_t req_data;
+	unsigned short type;
+	struct b2bl_new_entity* new_entities = NULL;
+	int ret;
+	str* hdrs;
+	int i;
+
+	if (hnames && !hvals) {
+		LM_ERR("header names without values!\n");
+		return -1;
+	}
+	if (!hnames && hvals) {
+		LM_ERR("header values without names!\n");
+		return -1;
+	}
+
+	if (key && key->len)
+	{
+		ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
+		if (ret < 0)
+		{
+			if (ret == -1)
+				LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key->len, key->s);
+			else
+				LM_ERR("Could not find entity [%.*s]\n",
+					key->len, key->s);
+			goto error;
+		}
+	}
+	else
+	{
+		hash_index = cur_route_ctx.hash_index;
+		local_index = cur_route_ctx.local_index;
+	}
+
+	lock_get(&b2bl_htable[hash_index].lock);
+	tuple = b2bl_search_tuple_safe(hash_index, local_index);
+	if (tuple == NULL)
+	{
+		LM_ERR("B2B logic record not found\n");
+		goto error;
+	}
+
+	if (ent_str && ent_str->len)
+	{
+		entity = NULL;
+		for (i = 0; i < MAX_BRIDGE_ENT; i++)
+		{
+			if (!tuple->bridge_entities[i])
+				continue;
+
+			if (!str_strcmp(ent_str, &tuple->bridge_entities[i]->scenario_id))
+				entity = tuple->bridge_entities[i];
+		}
+		if (entity == NULL)
+		{
+			LM_ERR("No b2b_key match found [%.*s]\n", ent_str->len, ent_str->s);
+			goto error;
+		}
+	}
+	else
+	{
+		entity = b2bl_search_entity(tuple, &cur_route_ctx.entity_key,
+			cur_route_ctx.entity_type, &entity_head);
+		if (entity == NULL)
+		{
+			LM_ERR("No b2b_key match found [%.*s], src=%d\n", cur_route_ctx.entity_key.len,
+				cur_route_ctx.entity_key.s, cur_route_ctx.entity_type);
+			goto error;
+		}
+	}
+
+	LM_DBG("Send request [%.*s] to entity: [%.*s], [%.*s]\n", request->len, request->s, entity->scenario_id.len, entity->scenario_id.s, tuple->key->len, tuple->key->s);
+
+	new_entities = pkg_malloc(sizeof(struct b2bl_new_entity));
+	if (!new_entities) {
+		LM_ERR("No more pkg memory!\n");
+		goto error;
+	}
+
+	if (hnames && pv_get_avp_name(msg, &hnames->pvp, &new_entities->avp_hdrs,
+		&type) < 0) {
+		LM_ERR("cannot resolve header names AVP\n");
+		goto error;
+	}
+	if (hvals && pv_get_avp_name(msg, &hvals->pvp, &new_entities->avp_hdr_vals,
+		&type) < 0) {
+		LM_ERR("cannot resolve header values AVP\n");
+		goto error;
+	}
+
+	hdrs = b2b_scenario_hdrs(new_entities);
+
+	memset(&req_data, 0, sizeof(b2b_req_data_t));
+	PREP_REQ_DATA(entity);
+	req_data.method = request;
+	req_data.client_headers = hdrs;
+	b2bl_htable[hash_index].locked_by = process_no;
+	b2b_api.send_request(&req_data);
+	b2bl_htable[hash_index].locked_by = -1;
+
+	lock_release(&b2bl_htable[hash_index].lock);
+	return 1;
+
+error:
+	if (new_entities)
+		shm_free(new_entities);
+	lock_release(&b2bl_htable[hash_index].lock);
+	return -1;
+}
+
+int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
+{
+	b2bl_tuple_t* tuple;
+	b2bl_entity_id_t* client_entity;
+	b2bl_entity_id_t* e = NULL;
+	unsigned int hash_index, local_index;
+	struct b2bl_new_entity* new_br_ent;
+	str* client_id;
+	str* hdrs;
+	int ret;
+	client_info_t ci;
+
+	if (key)
+	{
+		LM_DBG("Create client entity: [%.*s], [%.*s]\n", ent_str->len, ent_str->s, key->len, key->s);
+		ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
+		if (ret < 0)
+		{
+			if (ret == -1)
+				LM_ERR("Failed to parse key or find an entity [%.*s]\n",
+					key->len, key->s);
+			else
+				LM_ERR("Could not find entity [%.*s]\n",
+					key->len, key->s);
+			goto error;
+		}
+	}
+	else
+	{
+		LM_DBG("Create client entity: [%.*s]\n", ent_str->len, ent_str->s);
+		hash_index = cur_route_ctx.hash_index;
+		local_index = cur_route_ctx.local_index;
+	}
+
+	lock_get(&b2bl_htable[hash_index].lock);
+	tuple = b2bl_search_tuple_safe(hash_index, local_index);
+	if (tuple == NULL)
+	{
+		LM_ERR("B2B logic record not found\n");
+		goto error;
+	}
+
+	new_br_ent = get_ent_to_bridge(tuple, NULL, ent_str, &e);
+	if (new_br_ent == NULL)
+	{
+		LM_ERR("New entity not found\n");
+		goto error;
+	}
+
+	hdrs = b2b_scenario_hdrs(new_br_ent);
+
+	memset(&ci, 0, sizeof(client_info_t));
+	ci.method = method_invite;
+	ci.dst_uri = new_br_ent->proxy;
+	ci.to_uri = new_br_ent->dest_uri;
+	ci.from_dname = new_br_ent->from_dname;
+	ci.client_headers = hdrs;
+
+	if (body && body->len)
+		ci.body = body;
+	else
+		ci.body = 0;
+
+	ci.from_tag = 0;
+	ci.send_sock = msg ? (msg->force_send_socket ? msg->force_send_socket : msg->rcv.bind_address) : 0;
+	if (ci.send_sock) get_local_contact(ci.send_sock, NULL, &ci.local_contact);
+	else ci.local_contact = server_address;
+	ci.from_uri = ci.local_contact;
+
+	client_id = b2b_api.client_new(&ci, b2b_client_notify,
+		b2b_add_dlginfo, &b2bl_mod_name, tuple->key);
+
+	b2bl_htable[hash_index].locked_by = -1;
+
+	if (client_id == NULL)
+	{
+		LM_ERR("failed to create new b2b client instance\n");
+		goto error;
+	}
+
+	client_entity = b2bl_create_new_entity(B2B_CLIENT, client_id,
+		&new_br_ent->dest_uri, new_br_ent->proxy.s ? &new_br_ent->proxy : 0,
+		0, new_br_ent->from_dname.s ? &new_br_ent->from_dname : 0,
+		new_br_ent->id.s ? &new_br_ent->id : NULL, hdrs, 0);
+
+	if (client_entity == NULL)
+	{
+		LM_ERR("failed to create new client entity\n");
+		pkg_free(client_id);
+		goto error;
+	}
+	pkg_free(client_id);
+
+	if (0 != b2bl_add_client(tuple, client_entity))
+		goto error;
+
+	client_entity->no = 2;
+	client_entity->state = B2BL_ENT_CONFIRMED;
+	tuple->bridge_entities[2] = client_entity;
+
+	lock_release(&b2bl_htable[hash_index].lock);
+	return 1;
+error:
+	lock_release(&b2bl_htable[hash_index].lock);
+	return -1;
+}
+
 int b2b_send_reply(struct sip_msg *msg, int *code, str *reason)
 {
 	b2bl_tuple_t *tuple;

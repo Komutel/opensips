@@ -88,6 +88,8 @@ int b2b_pass_request(struct sip_msg *msg);
 int b2b_delete_entity(struct sip_msg *msg);
 int b2b_end_dlg_leg(struct sip_msg *msg);
 int b2b_send_reply(struct sip_msg *msg, int *code, str *reason);
+int b2b_send_request(struct sip_msg* msg, str* request, str* ent_str, str* key);
+int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body);
 int b2b_scenario_bridge(struct sip_msg *msg, str *br_ent1, str *br_ent2,
 	str *provmedia_uri, int *lifetime);
 int  b2b_bridge_request(struct sip_msg* msg, str *key, int *entity_no);
@@ -203,6 +205,18 @@ static cmd_export_t cmds[]=
 	{"b2b_send_reply",(cmd_function)b2b_send_reply, {
 		{CMD_PARAM_INT,0,0},
 		{CMD_PARAM_STR,0,0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{"b2b_send_request",(cmd_function)b2b_send_request, {
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT,0,0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT,0,0},
+		{CMD_PARAM_VAR | CMD_PARAM_OPT, fixup_check_avp, 0},
+		{CMD_PARAM_VAR | CMD_PARAM_OPT, fixup_check_avp, 0}, {0,0,0}},
+		REQUEST_ROUTE},
+	{"b2b_create_client",(cmd_function)b2b_create_client, {
+		{CMD_PARAM_STR,0,0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT,0,0},
+		{CMD_PARAM_STR | CMD_PARAM_OPT,0,0}, {0,0,0}},
 		REQUEST_ROUTE},
 	{"b2b_bridge", (cmd_function)b2b_scenario_bridge, {
 		{CMD_PARAM_STR,0,0},
