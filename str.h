@@ -22,6 +22,7 @@
 #define str_h
 
 #include <string.h>
+#include "lib/str2const.h"
 
 /**
  * \file
@@ -56,11 +57,23 @@ struct __str {
 	int len; /**< string length, not including null-termination */
 };
 
+/* Immutable version of the struct __str */
+struct __str_const {
+	const char* s; /**< string as char array */
+	int len; /**< string length, not including null-termination */
+};
+
 typedef struct __str str;
+typedef struct __str_const str_const;
 
 /* str initialization */
 #define STR_NULL (str){NULL, 0}
+#define STR_NULL_const (str_const){NULL, 0}
 #define str_init(_string)  (str){_string, sizeof(_string) - 1}
+#define str_const_init(_string)  (str_const){_string, sizeof(_string) - 1}
+
+static inline const str_const *_cs2cc(const str *_sp) {return (const str_const *)(const void *)(_sp);}
+static inline str_const *_s2c(str *_sp) {return (str_const *)(void *)(_sp);}
 
 static inline void init_str(str *dest, const char *src)
 {
@@ -94,5 +107,11 @@ static inline str *_str(const char *s)
 	init_str(&st, s);
 	return &st;
 }
+
+/**
+ * Initialize private static str_const given the static buffer
+ * and return const pointer to it.
+ */
+#define const_str(sbuf) ({static const str_const _stc = str_const_init(sbuf); &_stc;})
 
 #endif

@@ -43,6 +43,8 @@
 #include "mem/mem.h"
 #include "mem/shm_mem.h"
 
+#include "lib/str2const.h"
+
 typedef struct _int_str_t {
 	union {
 		int i;
@@ -645,7 +647,7 @@ static inline int str2short(str* _s, unsigned short *_r)
 /*
  * Convert a str into integer
  */
-static inline int str2int(str* _s, unsigned int* _r)
+static inline int str2int(const str* _s, unsigned int* _r)
 {
 	int i;
 
@@ -668,7 +670,7 @@ static inline int str2int(str* _s, unsigned int* _r)
 /*
  * Convert a str into a big integer
  */
-static inline int str2int64(str* _s, uint64_t *_r)
+static inline int str2int64(const str* _s, uint64_t *_r)
 {
 	int i;
 
@@ -692,7 +694,7 @@ static inline int str2int64(str* _s, uint64_t *_r)
 /*
  * Convert a str into signed integer
  */
-static inline int str2sint(str* _s, int* _r)
+static inline int str2sint(const str* _s, int* _r)
 {
 	int i;
 	int s;
@@ -727,7 +729,7 @@ static inline int str2sint(str* _s, int* _r)
 /*
  * Convert a str (base 10 or 16) into integer
  */
-static inline int strno2int( str *val, unsigned int *mask )
+static inline int strno2int(const str *val, unsigned int *mask )
 {
 	/* hexa or decimal*/
 	if (val->len>2 && val->s[0]=='0' && val->s[1]=='x') {
@@ -985,7 +987,7 @@ static inline int str_casematch(const str *a, const str *b)
 /*
  * compare two str's
  */
-static inline int str_strcmp(const str *stra, const str *strb)
+static inline int _str_strcmpCC(const str_const *stra, const str_const *strb)
 {
 	int i;
 	int alen;
@@ -1020,6 +1022,18 @@ static inline int str_strcmp(const str *stra, const str *strb)
 		return 1;
 	else
 		return 0;
+}
+static inline int _str_strcmpSS(const str *a, const str *b)
+{
+	return _str_strcmpCC(str2const(a), str2const(b));
+}
+static inline int _str_strcmpSC(const str *a, const str_const *b)
+{
+	return _str_strcmpCC(str2const(a), b);
+}
+static inline int _str_strcmpCS(const str_const *a, const str *b)
+{
+	return _str_strcmpCC(a, str2const(b));
 }
 
 /*

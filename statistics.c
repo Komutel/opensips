@@ -96,7 +96,7 @@ static mi_export_t mi_stat_cmds[] = {
 gen_lock_t *stat_lock = 0;
 #endif
 
-#define stat_hash(_s) core_hash( _s, 0, STATS_HASH_SIZE)
+#define stat_hash(_s) core_hash( _s, NULL, STATS_HASH_SIZE)
 
 #define stat_is_hidden(_s)  ((_s)->flags&STAT_HIDDEN)
 
@@ -222,7 +222,7 @@ module_stats *add_stat_module(char *module)
 /***************** Init / Destroy STATS support functions *******************/
 
 
-int clone_pv_stat_name(str *name, str *clone)
+int clone_pv_stat_name(const str *name, str *clone)
 {
 	clone->s = (char*)shm_malloc(name->len);
 	if (clone->s==NULL) {
