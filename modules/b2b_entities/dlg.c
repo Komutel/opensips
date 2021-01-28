@@ -1135,7 +1135,7 @@ logic_notify:
 
 	lock_get(&table[hash_index].lock);
 
-	if(etype!=B2B_NONE && dlg_state>B2B_CONFIRMED)
+	if(dlg_state>B2B_CONFIRMED)
 	{
 		/* search the dialog */
 		for(aux_dlg = table[hash_index].first; aux_dlg; aux_dlg = aux_dlg->next)
@@ -1152,12 +1152,12 @@ logic_notify:
 	}
 
 	if (B2BE_SERIALIZE_STORAGE()) {
-		if (etype != B2B_NONE && dlg_state == B2B_ESTABLISHED) {
+		if (dlg_state == B2B_ESTABLISHED) {
 			b2b_ev = B2B_EVENT_ACK;
 
 			b2b_run_cb(dlg, hash_index, etype, B2BCB_TRIGGER_EVENT, b2b_ev,
 				&storage, serialize_backend);
-		} else if (etype != B2B_NONE && dlg_state == B2B_TERMINATED) {
+		} else if (dlg_state == B2B_TERMINATED) {
 			b2b_ev = B2B_EVENT_DELETE;
 
 			b2b_run_cb(dlg, hash_index, etype, B2BCB_TRIGGER_EVENT, b2b_ev,
@@ -1166,7 +1166,7 @@ logic_notify:
 	}
 
 	current_dlg = 0;
-	if(b2be_db_mode == WRITE_THROUGH && etype!=B2B_NONE && dlg_state>B2B_CONFIRMED)
+	if(b2be_db_mode == WRITE_THROUGH && dlg_state>B2B_CONFIRMED)
 	{
 		if(b2be_db_update(dlg, etype) < 0)
 			LM_ERR("Failed to update in database\n");
@@ -2594,7 +2594,30 @@ void b2b_tm_cback(struct cell *t, b2b_table htable, struct tmcb_params *ps)
 		callid = msg->callid->body;
 		from_tag = ((struct to_body*)msg->from->parsed)->tag_value;
 	} else if (ps->req) {
-		from_tag = ((struct to_body*)ps->req->from->parsed)->tag_value;
+		if (!(struct to_body*)ps->req->from->parsed) {
+			if (!parse_to(ps->req->from->body.s,
+					ps->req->from->body.s, &from_hdr_parsed)) {
+				from_tag.s = NULL;
+				from_tag.len = 0;
+			} else {
+				from_tag = from_hdr_parsed.tag_value;
+				free_to_params(&from_hdr_parsed);
+			}
+		} else {
+			from_tag = ((struct to_body*)ps->req->from->parsed)->tag_value;
+		}
+		if (!(struct to_body*)ps->req->to->parsed) {
+			if (!parse_to(ps->req->to->body.s,
+					ps->req->to->body.s, &to_hdr_parsed)) {
+				to_tag.s = NULL;
+				to_tag.len = 0;
+			} else {
+				to_tag = to_hdr_parsed.tag_value;
+				free_to_params(&to_hdr_parsed);
+			}
+		} else {
+			to_tag = ((struct to_body*)ps->req->to->parsed)->tag_value;
+		}
 		to_tag = ((struct to_body*)ps->req->to->parsed)->tag_value;
 		callid = ps->req->callid->body;
 	} else {
@@ -2778,11 +2801,13 @@ void b2b_tm_cback(struct cell *t, b2b_table htable, struct tmcb_params *ps)
 			}
 			switch(statuscode)
 			{
-			case WWW_AUTH_CODE:
-				parse_www_authenticate_header(msg, &auth);
+			case 401:
+				if (0 == parse_www_authenticate_header(msg, &auth))
+					auth = get_www_authenticate(msg);
 				break;
-			case PROXY_AUTH_CODE:
-				parse_proxy_authenticate_header(msg, &auth);
+			case 407:
+				if (0 == parse_proxy_authenticate_header(msg, &auth))
+					auth = get_proxy_authenticate(msg);
 				break;
 			}
 			if(uac_auth_loaded && auth && dlg->state == B2B_NEW)
@@ -3150,7 +3175,7 @@ dummy_reply:
 		}
 
 		LM_DBG("DLG state = %d\n", dlg->state);
-		if(dlg->state== B2B_MODIFIED && statuscode >= 200 && statuscode <300)
+		if(dlg->state== B2B_MODIFIED && statuscode >= 200)
 		{
 			LM_DBG("switched the state CONFIRMED [%p]\n", dlg);
 			dlg->state = B2B_CONFIRMED;

@@ -850,65 +850,65 @@ int b2bl_callback_customer(b2bl_cb_params_t *params, unsigned int event)
 
 int set_call_leg( struct sip_msg *msg, struct cc_call *call, str *new_leg)
 {
-	str* id;
+	//str* id;
 
-	LM_DBG("call %p moving to %.*s , state %d\n", call,
-		new_leg->len, new_leg->s, call->state);
+	//LM_DBG("call %p moving to %.*s , state %d\n", call,
+	//	new_leg->len, new_leg->s, call->state);
 
-	if(call->state==CC_CALL_PRE_TOAGENT) {
-		str* args[4]={&call->agent->location, new_leg, &call->caller_dn,
-			&call->script_param};
-	
-		call->ref_cnt++;
+	//if(call->state==CC_CALL_PRE_TOAGENT) {
+	//	str* args[4]={&call->agent->location, new_leg, &call->caller_dn,
+	//		&call->script_param};
+	//
+	//	call->ref_cnt++;
 
-		id = b2b_api.bridge_extern( &b2b_scenario_agent, args, b2bl_callback_agent,
-				(void*)call, B2B_DESTROY_CB|B2B_REJECT_CB|B2B_BYE_CB );
+	//	id = b2b_api.bridge_extern( &b2b_scenario_agent, args, b2bl_callback_agent,
+	//			(void*)call, B2B_DESTROY_CB|B2B_REJECT_CB|B2B_BYE_CB );
 
-		if (id==NULL || id->len==0 || id->s==NULL) {
-			LM_ERR("failed to connect agent to media server "
-					"(empty ID received)\n");
-			return -2;
-		}
-		call->b2bua_agent_id.len = id->len;
-		call->b2bua_agent_id.s = (char*)shm_malloc(id->len);
-		if(call->b2bua_agent_id.s == NULL) {
-			LM_ERR("No more memory\n");
-			return -2;
-		}
-		memcpy(call->b2bua_agent_id.s, id->s, id->len);
-	}
-	else if (call->b2bua_id.len==0) {
-		str* args[2]={new_leg, &call->script_param};
-		/* b2b instance not initialized yet =>
-		 * create new b2bua instance */
-		call->ref_cnt++;
-		id = b2b_api.init( msg, &b2b_scenario, args, b2bl_callback_customer,
-				(void*)call, B2B_DESTROY_CB|B2B_REJECT_CB|B2B_BYE_CB, NULL /* custom_hdrs */ );
-		if (id==NULL || id->len==0 || id->s==NULL) {
-			LM_ERR("failed to init new b2bua call (empty ID received)\n");
-			return -2;
-		}
-		
-		call->b2bua_id.s = (char*)shm_malloc(id->len);
-		if (call->b2bua_id.s==NULL) {
-			LM_ERR("failed to allocate b2bua ID\n");
-			return -1;
-		}
-		memcpy( call->b2bua_id.s, id->s, id->len);
-		/* this must be the last, as we use it as marker for checking
-         * if b2b entity is initialized */
-		call->b2bua_id.len = id->len;
-	} else {
-		/* call already ongoing */
-		if(b2b_api.bridge( &call->b2bua_id, new_leg, &call->caller_dn, 0) < 0) {
-			LM_ERR("bridging failed\n");
-			b2b_api.terminate_call(&call->b2bua_id);
-			return -1;
-		}
-	}
-	/* remember last time when the call started */
-	call->last_start = get_ticks();
-	//b2b_api.set_state(&call->b2bua_id, call->state);
+	//	if (id==NULL || id->len==0 || id->s==NULL) {
+	//		LM_ERR("failed to connect agent to media server "
+	//				"(empty ID received)\n");
+	//		return -2;
+	//	}
+	//	call->b2bua_agent_id.len = id->len;
+	//	call->b2bua_agent_id.s = (char*)shm_malloc(id->len);
+	//	if(call->b2bua_agent_id.s == NULL) {
+	//		LM_ERR("No more memory\n");
+	//		return -2;
+	//	}
+	//	memcpy(call->b2bua_agent_id.s, id->s, id->len);
+	//}
+	//else if (call->b2bua_id.len==0) {
+	//	str* args[2]={new_leg, &call->script_param};
+	//	/* b2b instance not initialized yet =>
+	//	 * create new b2bua instance */
+	//	call->ref_cnt++;
+	//	id = b2b_api.init( msg, &b2b_scenario, args, b2bl_callback_customer,
+	//			(void*)call, B2B_DESTROY_CB|B2B_REJECT_CB|B2B_BYE_CB, NULL /* custom_hdrs */ );
+	//	if (id==NULL || id->len==0 || id->s==NULL) {
+	//		LM_ERR("failed to init new b2bua call (empty ID received)\n");
+	//		return -2;
+	//	}
+	//	
+	//	call->b2bua_id.s = (char*)shm_malloc(id->len);
+	//	if (call->b2bua_id.s==NULL) {
+	//		LM_ERR("failed to allocate b2bua ID\n");
+	//		return -1;
+	//	}
+	//	memcpy( call->b2bua_id.s, id->s, id->len);
+	//	/* this must be the last, as we use it as marker for checking
+ //        * if b2b entity is initialized */
+	//	call->b2bua_id.len = id->len;
+	//} else {
+	//	/* call already ongoing */
+	//	if(b2b_api.bridge( &call->b2bua_id, new_leg, &call->caller_dn, 0) < 0) {
+	//		LM_ERR("bridging failed\n");
+	//		b2b_api.terminate_call(&call->b2bua_id);
+	//		return -1;
+	//	}
+	//}
+	///* remember last time when the call started */
+	//call->last_start = get_ticks();
+	////b2b_api.set_state(&call->b2bua_id, call->state);
 	return 0;
 }
 
