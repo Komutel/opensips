@@ -1097,7 +1097,7 @@ int _b2b_handle_reply(struct sip_msg *msg, b2bl_tuple_t *tuple,
 				cur_route_ctx.entity_type);
 			goto error;
 		}
-		if (entity->no > 1)
+		if (entity->no > 2)
 		{
 			LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 			goto error;
@@ -1392,7 +1392,7 @@ int b2b_logic_notify_reply(int src, struct sip_msg* msg, str* key, str* body, st
 		LM_ERR("No b2b_key match found [%.*s], src=%d\n", key->len, key->s, src);
 		goto error;
 	}
-	if (entity->no > 1)
+	if (entity->no > 2)
 	{
 		LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 		goto error;
@@ -1505,7 +1505,7 @@ int _b2b_pass_request(struct sip_msg *msg, b2bl_tuple_t *tuple,
 				cur_route_ctx.entity_key.s, cur_route_ctx.entity_type);
 			goto error;
 		}
-		if (entity->no > 1)
+		if (entity->no > 2)
 		{
 			LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 			goto error;
@@ -1608,7 +1608,7 @@ int b2b_logic_notify_request(int src, struct sip_msg* msg, str* key, str* body, 
 		LM_ERR("No b2b_key match found [%.*s], src=%d\n", key->len, key->s, src);
 		goto error;
 	}
-	if (entity->no > 1)
+	if (entity->no > 2)
 	{
 		LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 		goto error;
@@ -2026,7 +2026,7 @@ int b2b_scenario_bridge(struct sip_msg *msg, str *br_ent1_str, str *br_ent2_str,
 		LM_DBG("No b2b_key match found [%.*s], src=%d\n", cur_route_ctx.entity_key.len,
 			cur_route_ctx.entity_key.s, cur_route_ctx.entity_type);
 	} else {
-		if (entity->no > 1)
+		if (entity->no > 2)
 		{
 			LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 			goto done;
@@ -2339,7 +2339,7 @@ int b2b_send_reply(struct sip_msg *msg, int *code, str *reason)
 			cur_route_ctx.entity_key.s, cur_route_ctx.entity_type);
 		goto error;
 	}
-	if (entity->no > 1)
+	if (entity->no > 2)
 	{
 		LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 		goto error;
@@ -2395,7 +2395,7 @@ int b2b_delete_entity(struct sip_msg *msg)
 			cur_route_ctx.entity_key.s, cur_route_ctx.entity_type);
 		goto error;
 	}
-	if (entity->no > 1)
+	if (entity->no > 2)
 	{
 		LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 		goto error;

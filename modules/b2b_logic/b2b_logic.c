@@ -1584,6 +1584,7 @@ int pv_get_entity(struct sip_msg *msg, pv_param_t *param, pv_value_t *res)
 
 	curr_entities[0] = tuple->bridge_entities[0];
 	curr_entities[1] = tuple->bridge_entities[1];
+	curr_entities[2] = tuple->bridge_entities[2];
 
 	if (local_ctx_tuple) {
 		/* the bridge_entities array might not be populated yet but the entities
@@ -1613,6 +1614,13 @@ int pv_get_entity(struct sip_msg *msg, pv_param_t *param, pv_value_t *res)
 
 		if (!entity) {
 			entity = curr_entities[1];
+			if (entity && (!entity->dlginfo ||
+				str_strcmp(&entity->dlginfo->callid, &callid)))
+				entity = NULL;
+		}
+
+		if (!entity) {
+			entity = curr_entities[2];
 			if (entity && (!entity->dlginfo ||
 				str_strcmp(&entity->dlginfo->callid, &callid)))
 				entity = NULL;
