@@ -1858,6 +1858,9 @@ int b2b_logic_notify_request(int src, struct sip_msg* msg, str* key, str* body, 
 		}
 		goto send_usual_request;
 	} else {
+		if (!peer)
+			peer = entity;
+
 		if(tuple->state != B2B_NOTDEF_STATE)
 			peer->sdp_type = body->len ? B2BL_SDP_NORMAL : B2BL_SDP_LATE;
 
