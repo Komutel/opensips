@@ -2131,9 +2131,6 @@ jump_over_body:
 	if (notify_body && subs->event->aux_body_processing)
 		aux_body = subs->event->aux_body_processing(subs, notify_body);
 
-	/* don't open new TCP connections if connection is down */
-	tcp_no_new_conn = 1;
-
 	result = tmb.t_request_within
 		(&met,                          /* method*/
 		&str_hdr,                       /* extra headers*/
@@ -2142,8 +2139,6 @@ jump_over_body:
 		p_tm_callback,                  /* callback function*/
 		(void*)cb_param,                /* callback parameter*/
 		NULL);
-
-	tcp_no_new_conn = 0;
 
 	if(aux_body) {
 		if(aux_body->s)
