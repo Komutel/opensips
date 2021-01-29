@@ -72,6 +72,15 @@
 #define REFER_STR "refer"
 #define REFER_STR_LEN 5
 
+#define LINE_HEADERS_STR "komutel-ng-headers"
+#define LINE_HEADERS_STR_LEN 18
+
+#define LINE_BODY_STR "komutel-ng-body"
+#define LINE_BODY_STR_LEN 15
+
+#define LINE_CONFERENCE_STR "komutel-ng-conference"
+#define LINE_CONFERENCE_STR_LEN 21
+
 
 static inline char* skip_token(char* _b, int _l)
 {
@@ -144,6 +153,15 @@ int event_parser(char* _s, int _l, event_t* _e)
 	} else if ((_e->text.len == REFER_STR_LEN) &&
 		   !strncasecmp(REFER_STR, tmp.s, _e->text.len)) {
 		_e->parsed = EVENT_REFER;
+	}	else if ((_e->text.len == LINE_HEADERS_STR_LEN) &&
+		!strncasecmp(LINE_HEADERS_STR, tmp.s, _e->text.len)) {
+		_e->parsed = EVENT_HEADERS;
+	}	else if ((_e->text.len == LINE_BODY_STR_LEN) &&
+		!strncasecmp(LINE_BODY_STR, tmp.s, _e->text.len)) {
+		_e->parsed = EVENT_BODY;
+	}	else if ((_e->text.len == LINE_CONFERENCE_STR_LEN) &&
+		!strncasecmp(LINE_CONFERENCE_STR, tmp.s, _e->text.len)) {
+		_e->parsed = EVENT_CONFERENCE;
 	} else {
 		_e->parsed = EVENT_OTHER;
 	}
