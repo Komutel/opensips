@@ -186,7 +186,7 @@ extern b2bl_table_t b2bl_htable;
 extern unsigned int b2bl_hsize;
 
 int process_bridge_action(struct sip_msg* msg, b2bl_tuple_t* tuple,
-	unsigned hash_index, b2bl_entity_id_t *old_entity,
+	unsigned hash_index, b2bl_entity_id_t *old_entity, b2bl_entity_id_t *new_entity,
 	struct b2bl_new_entity *new_br_ent[2], str *provmedia_uri, int lifetime);
 
 str* b2bl_bridge_extern(struct b2b_params *init_params,
