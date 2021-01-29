@@ -2905,14 +2905,14 @@ int process_bridge_action(struct sip_msg* msg, b2bl_tuple_t* tuple,
 			LM_DBG("Send Invite to a new client entity\n");
 			str from_uri = bridge_entities[0]->to_uri;
 			str to_uri = bridge_entities[1]->to_uri;
-			str dst_uri = bridge_entities[1]->dst_uri;
+			str proxy = bridge_entities[1]->proxy;
 			str from_dname = bridge_entities[0]->from_dname;
 			str hdrs = bridge_entities[0]->hdrs;
 
 			memset(&ci, 0, sizeof(client_info_t));
 			ci.method = method_invite;
-			ci.dst_uri = dst_uri;
 			ci.to_uri = to_uri;
+			ci.dst_uri = proxy;
 			ci.from_uri = from_uri;
 			ci.from_dname = from_dname;
 			ci.extra_headers = tuple->extra_headers;
@@ -2952,7 +2952,7 @@ int process_bridge_action(struct sip_msg* msg, b2bl_tuple_t* tuple,
 			}
 
 			/* save the client_id in the structure */
-			entity = b2bl_create_new_entity(B2B_CLIENT, client_id, &dst_uri, &to_uri,
+			entity = b2bl_create_new_entity(B2B_CLIENT, client_id, &to_uri, &proxy,
 				&from_uri, 0, bridge_entities[1]->scenario_id.s ?
 				&bridge_entities[1]->scenario_id : NULL, &hdrs, 0);
 			if (entity == NULL)
