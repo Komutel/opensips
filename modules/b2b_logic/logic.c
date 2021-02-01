@@ -2845,119 +2845,37 @@ int process_bridge_action(struct sip_msg* msg, b2bl_tuple_t* tuple,
 	 * -> send reInvite or Invite to one of the parties */
 	if(old_entity)
 	{
-		if (old_entity->state == B2BL_ENT_CONFIRMED)
+		LM_DBG("Sent reInvite without a body to old entity\n");
+		tuple->bridge_entities[0] = bridge_entities[0];
+		tuple->bridge_entities[1] = bridge_entities[1];
+
+		if (provmedia_uri)
 		{
-			LM_DBG("Sent reInvite without a body to old entity\n");
-			tuple->bridge_entities[0] = bridge_entities[0];
-			tuple->bridge_entities[1] = bridge_entities[1];
+			tuple->bridge_entities[2] = bridge_entities[1];
 
-			if (provmedia_uri)
+			tuple->bridge_entities[1] = b2bl_create_new_entity(B2B_CLIENT, 0,
+				provmedia_uri, 0, 0, 0, 0, 0, 0);
+			if (tuple->bridge_entities[1] == NULL)
 			{
-				tuple->bridge_entities[2] = bridge_entities[1];
-
-				tuple->bridge_entities[1] = b2bl_create_new_entity(B2B_CLIENT, 0,
-					provmedia_uri, 0, 0, 0, 0, 0, 0);
-				if (tuple->bridge_entities[1] == NULL)
-				{
-					LM_ERR("Failed to create new b2b entity\n");
-					goto error;
-				}
+				LM_ERR("Failed to create new b2b entity\n");
+				goto error;
 			}
-			old_entity->stats.start_time = get_ticks();
-			old_entity->stats.call_time = 0;
-			/* TODO -> Do I need some other info here? */
-			memset(&req_data, 0, sizeof(b2b_req_data_t));
-			PREP_REQ_DATA(old_entity);
-			req_data.method = &method_invite;
-			req_data.extra_headers = NULL;
-			req_data.client_headers = &old_entity->hdrs;
-			b2bl_htable[hash_index].locked_by = process_no;
-			b2b_api.send_request(&req_data);
-			b2bl_htable[hash_index].locked_by = -1;
-			old_entity->state = 0;
-			old_entity->sdp_type = B2BL_SDP_LATE;
-
-			tuple->state = B2B_BRIDGING_STATE;
 		}
-		else
-		{
-			LM_DBG("Send Invite to a new client entity\n");
-			str from_uri = bridge_entities[0]->to_uri;
-			str to_uri = bridge_entities[1]->to_uri;
-			str proxy = bridge_entities[1]->proxy;
-			str from_dname = bridge_entities[0]->from_dname;
-			str hdrs = bridge_entities[0]->hdrs;
+		old_entity->stats.start_time = get_ticks();
+		old_entity->stats.call_time = 0;
+		/* TODO -> Do I need some other info here? */
+		memset(&req_data, 0, sizeof(b2b_req_data_t));
+		PREP_REQ_DATA(old_entity);
+		req_data.method = &method_invite;
+		req_data.extra_headers = NULL;
+		req_data.client_headers = &old_entity->hdrs;
+		b2bl_htable[hash_index].locked_by = process_no;
+		b2b_api.send_request(&req_data);
+		b2bl_htable[hash_index].locked_by = -1;
+		old_entity->state = 0;
+		old_entity->sdp_type = B2BL_SDP_LATE;
 
-			memset(&ci, 0, sizeof(client_info_t));
-			ci.method = method_invite;
-			ci.to_uri = to_uri;
-			ci.dst_uri = proxy;
-			ci.from_uri = from_uri;
-			ci.from_dname = from_dname;
-			ci.extra_headers = tuple->extra_headers;
-			ci.client_headers = &hdrs;
-			/* if we use init sdp and we have it, just use it */
-			if (tuple->init_sdp.s) {
-				ci.body = &tuple->init_sdp;
-			}
-			else {
-				ci.body = 0;
-			}
-			ci.from_tag = 0;
-			ci.send_sock = msg ? (msg->force_send_socket ? msg->force_send_socket : msg->rcv.bind_address) : 0;
-			if (ci.send_sock) get_local_contact(ci.send_sock, NULL, &ci.local_contact);
-			else ci.local_contact = server_address;
-
-			if (msg)
-			{
-				if (str2int(&(get_cseq(msg)->number), &ci.cseq) != 0)
-				{
-					LM_ERR("cannot parse cseq number\n");
-					goto error1;
-				}
-			}
-
-			b2bl_htable[hash_index].locked_by = process_no;
-
-			client_id = b2b_api.client_new(&ci, b2b_client_notify,
-				b2b_add_dlginfo, &b2bl_mod_name, tuple->key);
-
-			b2bl_htable[hash_index].locked_by = -1;
-
-			if (client_id == NULL)
-			{
-				LM_ERR("Failed to create new client entity\n");
-				goto error1;
-			}
-
-			/* save the client_id in the structure */
-			entity = b2bl_create_new_entity(B2B_CLIENT, client_id, &to_uri, &proxy,
-				&from_uri, 0, bridge_entities[1]->scenario_id.s ?
-				&bridge_entities[1]->scenario_id : NULL, &hdrs, 0);
-			if (entity == NULL)
-			{
-				LM_ERR("failed to create new client entity\n");
-				pkg_free(client_id);
-				goto error1;
-			}
-			pkg_free(client_id);
-			entity->stats.call_time = get_ticks();
-			entity->type = B2B_CLIENT;
-			// entity->peer = bridge_entities[1];
-			entity->sdp_type = ci.body ? B2BL_SDP_RENEW : B2BL_SDP_LATE;
-			shm_free(bridge_entities[1]);
-
-			tuple->bridge_entities[0] = bridge_entities[0];
-			tuple->bridge_entities[1] = entity;
-
-			tuple->bridge_entities[0]->peer = tuple->bridge_entities[1];
-			tuple->bridge_entities[1]->peer = tuple->bridge_entities[0];
-
-			if (0 != b2bl_add_client(tuple, entity))
-				goto error1;
-
-			tuple->state = 0;
-		}
+		tuple->state = B2B_BRIDGING_STATE;
 	}
 	else
 	{
