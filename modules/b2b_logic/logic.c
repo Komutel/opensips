@@ -867,56 +867,35 @@ int process_bridge_200OK(struct sip_msg* msg, str* extra_headers,
 		tuple->bridge_entities[1]->peer = tuple->bridge_entities[0];
 		tuple->bridge_entities[0]->peer = tuple->bridge_entities[1];
 		/* now I have finnished the BRIDGING scenario -> mark this in the record */
-		if(tuple->bridge_entities[2] == NULL)
-		{
 
-			/* if there was a renew SDP type, we have to challenge the first
-			 * entity again with an invite, just to update its SDP info */
-			if (bentity0->sdp_type == B2BL_SDP_RENEW)
+		/* if there was a renew SDP type, we have to challenge the first
+			* entity again with an invite, just to update its SDP info */
+		if (bentity0->sdp_type == B2BL_SDP_RENEW)
+		{
+			memset(&req_data, 0, sizeof(b2b_req_data_t));
+			req_data.et =bentity0->type;
+			req_data.b2b_key =&bentity0->key;
+			req_data.method =&method_invite;
+			req_data.client_headers=&bentity0->hdrs;
+			req_data.extra_headers = extra_headers;
+			req_data.body = body;
+			req_data.dlginfo =bentity0->dlginfo;
+			b2bl_htable[hash_index].locked_by = process_no;
+			if(b2b_api.send_request(&req_data) < 0)
 			{
-				memset(&req_data, 0, sizeof(b2b_req_data_t));
-				req_data.et =bentity0->type;
-				req_data.b2b_key =&bentity0->key;
-				req_data.method =&method_invite;
-				req_data.client_headers=&bentity0->hdrs;
-				req_data.extra_headers = extra_headers;
-				req_data.body = body;
-				req_data.dlginfo =bentity0->dlginfo;
-				b2bl_htable[hash_index].locked_by = process_no;
-				if(b2b_api.send_request(&req_data) < 0)
-				{
-					LM_ERR("Failed to send re-invite in bridging scenario\n");
-					b2bl_htable[hash_index].locked_by = -1;
-					return -1;
-				}
+				LM_ERR("Failed to send re-invite in bridging scenario\n");
 				b2bl_htable[hash_index].locked_by = -1;
-				/* after sending this invite, the first endpoint should have
-				 * the proper SDP used */
-				bentity0->sdp_type = B2BL_SDP_NORMAL;
-			} else {
-				/* bridging scenario should be done */
+				return -1;
+			}
+			b2bl_htable[hash_index].locked_by = -1;
+			/* after sending this invite, the first endpoint should have
+				* the proper SDP used */
+			bentity0->sdp_type = B2BL_SDP_NORMAL;
+		} else {
+			/* bridging scenario should be done */
 
-				tuple->state = B2B_NOTDEF_STATE;
-				LM_DBG("Finished the bridging\n");
-			}
-		}
-		else
-		{
-			/* contact the real destination */
-			entity =  b2bl_new_client(&tuple->bridge_entities[2]->to_uri,
-				&tuple->bridge_entities[2]->proxy, &bentity0->from_uri, tuple,
-				&tuple->bridge_entities[2]->scenario_id, &tuple->bridge_entities[2]->hdrs, msg);
-			if(entity == NULL)
-			{
-				LM_ERR("Failed to generate new client\n");
-				return -1;
-			}
-			entity->no = 1;
-			b2bl_delete_entity(tuple->bridge_entities[2], tuple, hash_index, 1);
-			if (0 != b2bl_add_client(tuple, entity))
-				return -1;
-			/* original destination connected in the second step */
-			tuple->bridge_entities[2]= entity;
+			tuple->state = B2B_NOTDEF_STATE;
+			LM_DBG("Finished the bridging\n");
 		}
 	}
 	else /* if a 200 OK from the final destination */
