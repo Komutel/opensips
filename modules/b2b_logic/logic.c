@@ -2354,9 +2354,9 @@ int b2b_delete_entity(struct sip_msg *msg)
 	b2bl_entity_id_t *entity;
 	b2bl_entity_id_t** entity_head = NULL;
 
-	if (!(cur_route_ctx.flags & B2BL_RT_REQ_CTX)) {
+	if (!(cur_route_ctx.flags & (B2BL_RT_REQ_CTX|B2BL_RT_RPL_CTX))) {
 		LM_ERR("The 'b2b_delete_entity' function can only be used from the "
-			"b2b_logic dedicated request routes\n");
+			"b2b_logic dedicated routes\n");
 		return -1;
 	}
 
@@ -3893,11 +3893,11 @@ int b2bl_server_new(struct sip_msg *msg, str *id,
 int b2bl_client_new(struct sip_msg *msg, str *id, str *dest_uri, str *proxy,
 	 str *from_dname, pv_spec_t *hnames, pv_spec_t *hvals)
 {
-	if (cur_route_ctx.flags & B2BL_RT_RPL_CTX) {
-		LM_ERR("The 'b2b_client_new' function cannot be used from the "
-			"b2b_logic dedicated reply routes\n");
-		return -1;
-	}
+	//if (cur_route_ctx.flags & B2BL_RT_RPL_CTX) {
+	//	LM_ERR("The 'b2b_client_new' function cannot be used from the "
+	//		"b2b_logic dedicated reply routes\n");
+	//	return -1;
+	//}
 
 	return b2bl_entity_new(msg, id, dest_uri, proxy, B2B_CLIENT,
 		hnames, hvals, from_dname);
