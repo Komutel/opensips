@@ -2194,6 +2194,8 @@ int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
 	str* hdrs;
 	int ret;
 	client_info_t ci;
+	struct b2b_ctx_val* v, *w;
+	b2b_dlginfo_t dlginfo_s;
 
 	if (key && key->len)
 	{
@@ -2224,6 +2226,15 @@ int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
 		LM_ERR("B2B logic record not found\n");
 		goto error;
 	}
+
+	w = NULL;
+	for (v = tuple->vals; v; v = v->next)
+		w = v;
+
+	if (w)
+		w->next = local_ctx_vals;
+
+	local_ctx_vals = NULL;
 
 	new_br_ent = get_ent_to_bridge(tuple, NULL, ent_str, &e);
 	if (new_br_ent == NULL)
@@ -2272,6 +2283,14 @@ int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
 	{
 		LM_ERR("failed to create new client entity\n");
 		pkg_free(client_id);
+		goto error;
+	}
+
+	memset(&dlginfo_s, 0, sizeof(b2b_dlginfo_t));
+	dlginfo_s.callid = *client_id;
+	if (entity_add_dlginfo(client_entity, &dlginfo_s) < 0)
+	{
+		LM_ERR("Failed to add dialoginfo\n");
 		goto error;
 	}
 
