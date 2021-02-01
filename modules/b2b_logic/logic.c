@@ -2195,7 +2195,7 @@ int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
 	int ret;
 	client_info_t ci;
 
-	if (key)
+	if (key && key->len)
 	{
 		LM_DBG("Create client entity: [%.*s], [%.*s]\n", ent_str->len, ent_str->s, key->len, key->s);
 		ret = b2bl_get_tuple_key(key, &hash_index, &local_index);
@@ -2274,6 +2274,7 @@ int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
 		pkg_free(client_id);
 		goto error;
 	}
+
 	pkg_free(client_id);
 
 	if (0 != b2bl_add_client(tuple, client_entity))
