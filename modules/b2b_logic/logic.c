@@ -587,62 +587,6 @@ int process_bridge_negreply(b2bl_tuple_t* tuple,
 	return process_bridge_dialog_end(tuple, hash_index, entity_no, entity);
 }
 
-static b2bl_entity_id_t* b2bl_new_client(str* to_uri, str *proxy, str* from_uri,
-		b2bl_tuple_t* tuple, str* ssid, str* hdrs, struct sip_msg* msg)
-{
-	client_info_t ci;
-	str* client_id;
-	b2bl_entity_id_t* entity;
-
-	memset(&ci, 0, sizeof(client_info_t));
-	ci.method        = method_invite;
-	ci.to_uri        = *to_uri;
-	ci.dst_uri       = *proxy;
-	ci.from_uri      = *from_uri;
-	ci.extra_headers = tuple->extra_headers;
-	ci.client_headers= hdrs;
-	ci.body          = (tuple->sdp.s?&tuple->sdp:NULL);
-	ci.from_tag      = NULL;
-	ci.send_sock     = msg?(msg->force_send_socket?msg->force_send_socket:msg->rcv.bind_address):NULL;
-	if (ci.send_sock) get_local_contact(ci.send_sock, NULL, &ci.local_contact);
-	else ci.local_contact = server_address;
-
-	if(msg)
-	{
-		if (str2int( &(get_cseq(msg)->number), &ci.cseq)!=0 )
-		{
-			LM_ERR("cannot parse cseq number\n");
-			return NULL;
-		}
-	}
-
-	LM_DBG("Send Invite without a body to a new client entity\n");
-
-	b2bl_htable[tuple->hash_index].locked_by = process_no;
-
-	client_id = b2b_api.client_new(&ci, b2b_client_notify,
-			b2b_add_dlginfo, &b2bl_mod_name, tuple->key);
-
-	b2bl_htable[tuple->hash_index].locked_by = -1;
-
-	if(client_id == NULL)
-	{
-		LM_ERR("Failed to create client id\n");
-		return NULL;
-	}
-	/* save the client_id in the structure */
-	entity = b2bl_create_new_entity(B2B_CLIENT, client_id, &ci.to_uri, 0,
-		&ci.from_uri, 0, ssid, hdrs, 0);
-	if(entity == NULL)
-	{
-		LM_ERR("failed to create new client entity\n");
-		pkg_free(client_id);
-		return NULL;
-	}
-	pkg_free(client_id);
-
-	return entity;
-}
 int process_bridge_200OK(struct sip_msg* msg, str* extra_headers,
 		str* body, b2bl_tuple_t* tuple, unsigned int hash_index,
 		b2bl_entity_id_t* entity)
