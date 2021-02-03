@@ -2360,12 +2360,13 @@ error:
 	return -1;
 }
 
-int b2b_end_dlg_leg(struct sip_msg *msg)
+int b2b_end_dlg_leg(struct sip_msg *msg, str* ent_str)
 {
 	b2bl_tuple_t *tuple;
 	b2bl_entity_id_t *entity;
 	b2b_req_data_t req_data;
 	b2bl_entity_id_t** entity_head = NULL;
+	int i;
 
 	if (!(cur_route_ctx.flags & (B2BL_RT_REQ_CTX|B2BL_RT_RPL_CTX))) {
 		LM_ERR("The 'b2b_end_dlg_leg' function can only be used from the "
@@ -2382,15 +2383,36 @@ int b2b_end_dlg_leg(struct sip_msg *msg)
 		goto error;
 	}
 
-	entity = b2bl_search_entity(tuple, &cur_route_ctx.entity_key,
-		cur_route_ctx.entity_type, &entity_head);
-	if(entity == NULL)
+	if (ent_str && ent_str->len)
 	{
-		LM_ERR("No b2b_key match found [%.*s], src=%d\n", cur_route_ctx.entity_key.len,
-			cur_route_ctx.entity_key.s, cur_route_ctx.entity_type);
-		goto error;
+		entity = NULL;
+		for (i = 0; i < MAX_BRIDGE_ENT; i++)
+		{
+			if (!tuple->bridge_entities[i])
+				continue;
+
+			if (!str_strcmp(ent_str, &tuple->bridge_entities[i]->scenario_id))
+				entity = tuple->bridge_entities[i];
+		}
+		if (entity == NULL)
+		{
+			LM_ERR("No b2b_key match found [%.*s]\n", ent_str->len, ent_str->s);
+			goto error;
+		}
 	}
-	if (entity->no > 1)
+	else
+	{
+		entity = b2bl_search_entity(tuple, &cur_route_ctx.entity_key,
+			cur_route_ctx.entity_type, &entity_head);
+		if (entity == NULL)
+		{
+			LM_ERR("No b2b_key match found [%.*s], src=%d\n", cur_route_ctx.entity_key.len,
+				cur_route_ctx.entity_key.s, cur_route_ctx.entity_type);
+			goto error;
+		}
+	}
+
+	if (entity->no > 2)
 	{
 		LM_ERR("unexpected entity->no [%d] for tuple [%p]\n", entity->no, tuple);
 		goto error;
