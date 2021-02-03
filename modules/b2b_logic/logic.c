@@ -1930,9 +1930,9 @@ int b2b_scenario_bridge(struct sip_msg *msg, str *br_ent1_str, str *br_ent2_str,
 	struct b2bl_new_entity *new_br_ent[2];
 	int rc = -1;
 
-	if (!(cur_route_ctx.flags & B2BL_RT_REQ_CTX)) {
+	if (!(cur_route_ctx.flags & (B2BL_RT_REQ_CTX|B2BL_RT_RPL_CTX))) {
 		LM_ERR("The 'b2b_bridge' function can only be used from the "
-			"b2b_logic dedicated request routes\n");
+			"b2b_logic dedicated routes\n");
 		return -1;
 	}
 
