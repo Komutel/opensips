@@ -2221,7 +2221,7 @@ int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
 	client_entity = b2bl_create_new_entity(B2B_CLIENT, client_id,
 		&new_br_ent->dest_uri, new_br_ent->proxy.s ? &new_br_ent->proxy : 0,
 		0, new_br_ent->from_dname.s ? &new_br_ent->from_dname : 0,
-		new_br_ent->id.s ? &new_br_ent->id : NULL, hdrs, 0);
+		new_br_ent->id.s ? &new_br_ent->id : NULL, 0, 0);
 
 	if (client_entity == NULL)
 	{
