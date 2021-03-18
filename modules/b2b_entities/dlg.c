@@ -773,7 +773,7 @@ int b2b_prescript_f(struct sip_msg *msg, void *uparam)
 		if (!check_self( &host, port ? port : SIP_PORT, msg->rcv.proto))
 		{
 			LM_DBG("RURI does not point to me\n");
-			return SCB_RUN_ALL;
+			//return SCB_RUN_ALL;
 		}
 	}
 
