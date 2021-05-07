@@ -2207,6 +2207,8 @@ int b2b_create_client(struct sip_msg* msg, str* ent_str, str* key, str* body)
 	else ci.local_contact = server_address;
 	ci.from_uri = ci.local_contact;
 
+	b2bl_htable[hash_index].locked_by = process_no;
+
 	client_id = b2b_api.client_new(&ci, b2b_client_notify,
 		b2b_add_dlginfo, &b2bl_mod_name, tuple->key);
 
